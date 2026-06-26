@@ -185,6 +185,23 @@ public class MainActivity extends AppCompatActivity {
 
     // ─── Shell via rish ──────────────────────────────────────────
 
+    private String runShellOutput(String cmd) {
+        try {
+            if (rishFile == null || !rishFile.exists()) initRish();
+            ProcessBuilder pb = new ProcessBuilder(rishFile.getAbsolutePath(), "-c", cmd);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line).append("\n");
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return "Exception: " + e.getMessage();
+        }
+    }
+
     private boolean runShell(String cmd) {
         try {
             if (rishFile == null || !rishFile.exists()) {
@@ -193,7 +210,6 @@ public class MainActivity extends AppCompatActivity {
             ProcessBuilder pb = new ProcessBuilder(rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            // Đọc output để tránh buffer block
             new BufferedReader(new InputStreamReader(p.getInputStream()))
                 .lines().forEach(l -> {});
             int exit = p.waitFor();
@@ -250,7 +266,8 @@ public class MainActivity extends AppCompatActivity {
             if (!backupExists) {
                 boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
                 if (!renamed) {
-                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources.");
+                    String debug = runShellOutput("echo rishOK; ls \"" + DATA_PATH + "\"; mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\" 2>&1; echo exitcode:$?");
+                    showDialog("Lỗi debug", "rish path: " + (rishFile != null ? rishFile.getAbsolutePath() : "null") + "\nexists: " + (rishFile != null && rishFile.exists()) + "\n\n" + debug);
                     return;
                 }
             }
