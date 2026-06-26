@@ -188,7 +188,7 @@ public class MainActivity extends AppCompatActivity {
     private String runShellOutput(String cmd) {
         try {
             if (rishFile == null || !rishFile.exists()) initRish();
-            ProcessBuilder pb = new ProcessBuilder(rishFile.getAbsolutePath(), "-c", cmd);
+            ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
@@ -207,7 +207,7 @@ public class MainActivity extends AppCompatActivity {
             if (rishFile == null || !rishFile.exists()) {
                 initRish();
             }
-            ProcessBuilder pb = new ProcessBuilder(rishFile.getAbsolutePath(), "-c", cmd);
+            ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             new BufferedReader(new InputStreamReader(p.getInputStream()))
@@ -223,7 +223,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             if (rishFile == null || !rishFile.exists()) initRish();
             ProcessBuilder pb = new ProcessBuilder(
-                rishFile.getAbsolutePath(), "-c",
+                "sh", rishFile.getAbsolutePath(), "-c",
                 "[ -e \"" + path + "\" ] && echo yes || echo no");
             Process p = pb.start();
             String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
