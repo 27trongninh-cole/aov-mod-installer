@@ -1,5 +1,6 @@
 package com.modinstaller;
 
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -15,11 +16,17 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -30,39 +37,40 @@ import rikka.shizuku.Shizuku;
 public class MainActivity extends AppCompatActivity {
 
     private static final int SHIZUKU_PERMISSION_CODE = 100;
+    private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
+    private static final String DATA_PATH = "/sdcard/Android/data/com.garena.game.kgvn/files";
+    private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
+    private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
 
-    private TextView tvStatus;
-    private TextView tvLog;
-    private Button btnPickFile;
-    private Button btnInstall;
+    private TextView tvShizukuStatus;
+    private Button btnFixResources;
+    private Button btnInstallMod;
+    private Button btnRemoveMod;
     private ProgressBar progressBar;
 
-    private Uri selectedZipUri = null;
+    private String resourcesUrl = null;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    // Shizuku permission listener
     private final Shizuku.OnRequestPermissionResultListener permissionResultListener =
         (requestCode, grantResult) -> {
             if (requestCode == SHIZUKU_PERMISSION_CODE) {
                 if (grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    log("✅ Shizuku đã cấp quyền!");
-                    updateStatus("Sẵn sàng cài mod");
+                    updateShizukuStatus(true);
+                    fetchConfig();
                 } else {
-                    log("❌ Shizuku từ chối quyền. Vui lòng thử lại.");
+                    updateShizukuStatus(false);
+                    showToast("Shizuku từ chối quyền. Vui lòng thử lại.");
                 }
             }
         };
 
-    // File picker
     private final ActivityResultLauncher<String[]> filePickerLauncher =
         registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
             if (uri != null) {
-                selectedZipUri = uri;
-                String fileName = getFileNameFromUri(uri);
-                log("📦 Đã chọn: " + fileName);
-                updateStatus("Đã chọn file: " + fileName);
-                btnInstall.setEnabled(true);
+                setButtonsEnabled(false);
+                showProgress(true);
+                executor.execute(() -> installMod(uri));
             }
         });
 
@@ -71,219 +79,376 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        tvStatus = findViewById(R.id.tv_status);
-        tvLog = findViewById(R.id.tv_log);
-        btnPickFile = findViewById(R.id.btn_pick_file);
-        btnInstall = findViewById(R.id.btn_install);
+        tvShizukuStatus = findViewById(R.id.tv_shizuku_status);
+        btnFixResources = findViewById(R.id.btn_fix_resources);
+        btnInstallMod = findViewById(R.id.btn_install_mod);
+        btnRemoveMod = findViewById(R.id.btn_remove_mod);
         progressBar = findViewById(R.id.progress_bar);
 
-        btnInstall.setEnabled(false);
-
-        // Thêm listener Shizuku
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
 
-        // Kiểm tra Shizuku khi mở app
-        checkShizuku();
+        btnFixResources.setOnClickListener(v -> {
+            if (!checkShizuku()) return;
+            new AlertDialog.Builder(this)
+                .setTitle("Fix Resources")
+                .setMessage("App sẽ tải và thay thế thư mục Resources. Quá trình này có thể mất vài phút tùy tốc độ mạng. Tiếp tục?")
+                .setPositiveButton("Tiếp tục", (d, w) -> {
+                    setButtonsEnabled(false);
+                    showProgress(true);
+                    executor.execute(this::fixResources);
+                })
+                .setNegativeButton("Hủy", null)
+                .show();
+        });
 
-        btnPickFile.setOnClickListener(v -> {
+        btnInstallMod.setOnClickListener(v -> {
+            if (!checkShizuku()) return;
             filePickerLauncher.launch(new String[]{"application/zip", "application/x-zip-compressed"});
         });
 
-        btnInstall.setOnClickListener(v -> {
-            if (selectedZipUri != null) {
-                startInstall();
-            }
+        btnRemoveMod.setOnClickListener(v -> {
+            if (!checkShizuku()) return;
+            new AlertDialog.Builder(this)
+                .setTitle("Xóa tất cả Mod")
+                .setMessage("App sẽ xóa Resources đã thay thế và khôi phục Resources gốc. Tiếp tục?")
+                .setPositiveButton("Tiếp tục", (d, w) -> {
+                    setButtonsEnabled(false);
+                    showProgress(true);
+                    executor.execute(this::removeMod);
+                })
+                .setNegativeButton("Hủy", null)
+                .show();
         });
+
+        checkShizukuAndInit();
     }
 
-    private void checkShizuku() {
+    // ─── Shizuku ────────────────────────────────────────────────
+
+    private void checkShizukuAndInit() {
         if (!Shizuku.pingBinder()) {
-            log("⚠️ Shizuku chưa chạy. Hãy mở Shizuku và bấm Start.");
-            updateStatus("Chờ Shizuku...");
+            updateShizukuStatus(false);
+            showToast("Shizuku chưa chạy. Hãy mở Shizuku và bấm Start.");
             return;
         }
-
         if (Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            log("✅ Shizuku sẵn sàng!");
-            updateStatus("Sẵn sàng cài mod");
+            updateShizukuStatus(true);
+            fetchConfig();
         } else {
-            log("🔑 Đang xin quyền Shizuku...");
             Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE);
         }
     }
 
-    private void startInstall() {
+    private boolean checkShizuku() {
         if (!Shizuku.pingBinder()) {
-            Toast.makeText(this, "Shizuku chưa chạy!", Toast.LENGTH_SHORT).show();
-            checkShizuku();
-            return;
+            showToast("Shizuku chưa chạy!");
+            return false;
         }
-
         if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Chưa có quyền Shizuku!", Toast.LENGTH_SHORT).show();
+            showToast("Chưa có quyền Shizuku!");
             Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE);
-            return;
+            return false;
         }
+        return true;
+    }
 
-        btnInstall.setEnabled(false);
-        btnPickFile.setEnabled(false);
-        progressBar.setVisibility(View.VISIBLE);
-        tvLog.setText("");
+    // ─── Config ─────────────────────────────────────────────────
 
+    private void fetchConfig() {
         executor.execute(() -> {
             try {
-                log("📂 Đang giải nén...");
+                HttpURLConnection conn = (HttpURLConnection) new URL(CONFIG_URL).openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
 
-                // Giải nén vào thư mục tạm
-                File tmpDir = new File(getCacheDir(), "mod_tmp");
-                if (tmpDir.exists()) deleteDir(tmpDir);
-                tmpDir.mkdirs();
-
-                String packageName = unzipAndDetectPackage(selectedZipUri, tmpDir);
-
-                if (packageName == null) {
-                    log("❌ Không tìm thấy thư mục package trong ZIP!");
-                    log("💡 ZIP phải chứa thư mục tên package (vd: com.garena.game.kgvn)");
-                    resetUI();
-                    return;
-                }
-
-                log("📱 Package phát hiện: " + packageName);
-                log("📋 Đang copy vào Android/data/...");
-
-                // Copy bằng Shizuku shell
-                File modFolder = new File(tmpDir, packageName);
-                String targetPath = "/sdcard/Android/data/" + packageName;
-
-                // Dùng Shizuku để chạy shell command
-                boolean success = copyWithShizuku(modFolder.getAbsolutePath(), targetPath);
-
-                // Dọn dẹp tmp
-                deleteDir(tmpDir);
-
-                if (success) {
-                    log("✅ Cài mod thành công!");
-                    log("🎮 Khởi động lại game để thấy thay đổi.");
-                    mainHandler.post(() -> updateStatus("✅ Cài mod thành công!"));
-                } else {
-                    log("❌ Cài mod thất bại. Kiểm tra log bên trên.");
-                    mainHandler.post(() -> updateStatus("❌ Cài mod thất bại"));
-                }
-
+                JSONObject json = new JSONObject(sb.toString());
+                resourcesUrl = json.getString("resources_url");
             } catch (Exception e) {
-                log("❌ Lỗi: " + e.getMessage());
-            } finally {
-                resetUI();
+                // Config fetch thất bại, tiếp tục không có URL
+                resourcesUrl = null;
             }
         });
     }
 
-    private String unzipAndDetectPackage(Uri zipUri, File destDir) throws IOException {
-        String detectedPackage = null;
+    // ─── Tính năng 1: Fix Resources ─────────────────────────────
 
-        try (InputStream is = getContentResolver().openInputStream(zipUri);
-             ZipInputStream zis = new ZipInputStream(is)) {
-
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                String entryName = entry.getName();
-
-                // Detect package name từ thư mục đầu tiên
-                if (detectedPackage == null) {
-                    String[] parts = entryName.split("/");
-                    if (parts.length > 0 && parts[0].contains(".")) {
-                        detectedPackage = parts[0];
-                        log("🔍 Phát hiện package: " + detectedPackage);
-                    }
-                }
-
-                // Giải nén file
-                File outFile = new File(destDir, entryName);
-
-                if (entry.isDirectory()) {
-                    outFile.mkdirs();
-                } else {
-                    outFile.getParentFile().mkdirs();
-                    try (OutputStream os = new FileOutputStream(outFile)) {
-                        byte[] buffer = new byte[8192];
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) {
-                            os.write(buffer, 0, len);
-                        }
-                    }
-                }
-                zis.closeEntry();
+    private void fixResources() {
+        try {
+            if (resourcesUrl == null) {
+                showDialog("Lỗi", "Không lấy được config từ server. Kiểm tra kết nối mạng và thử lại.");
+                return;
             }
-        }
 
-        return detectedPackage;
+            // Kiểm tra backup đã tồn tại chưa
+            boolean backupExists = fileExists(BACKUP_PATH);
+
+            if (!backupExists) {
+                // Rename Resources → Resources_ninfinity_backup
+                boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
+                if (!renamed) {
+                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources. Kiểm tra Shizuku có đang chạy không.");
+                    return;
+                }
+            }
+
+            // Tải Resources.zip về cache
+            File zipFile = new File(getCacheDir(), "Resources.zip");
+            downloadFile(resourcesUrl, zipFile);
+
+            // Tạo thư mục Resources mới
+            runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
+
+            // Giải nén vào thư mục tạm rồi copy
+            File tmpDir = new File(getCacheDir(), "res_tmp");
+            if (tmpDir.exists()) deleteDir(tmpDir);
+            tmpDir.mkdirs();
+
+            unzip(zipFile, tmpDir);
+
+            // Copy từ tmp vào Resources
+            boolean copied = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
+
+            // Dọn dẹp
+            zipFile.delete();
+            deleteDir(tmpDir);
+
+            if (copied) {
+                showDialog("Thành công", "Fix Resources thành công! Khởi động lại game để thấy thay đổi.");
+            } else {
+                showDialog("Lỗi", "Copy Resources thất bại. Thử lại.");
+            }
+
+        } catch (Exception e) {
+            showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
+        } finally {
+            mainHandler.post(() -> {
+                setButtonsEnabled(true);
+                showProgress(false);
+            });
+        }
     }
 
-    private boolean copyWithShizuku(String srcPath, String targetPath) {
-    return copyWithShizukuExecute(srcPath, targetPath);
-}
+    // ─── Tính năng 2: Cài file Mod ──────────────────────────────
 
-    private boolean copyWithShizukuExecute(String srcPath, String targetPath) {
-    try {
-        String mkdirCmd = "mkdir -p \"" + targetPath + "\"";
-        String copyCmd = "cp -rT \"" + srcPath + "\" \"" + targetPath + "\"";
+    private void installMod(Uri zipUri) {
+        try {
+            File tmpDir = new File(getCacheDir(), "mod_tmp");
+            if (tmpDir.exists()) deleteDir(tmpDir);
+            tmpDir.mkdirs();
 
-        // Dùng Runtime với shell thường trước
-        Process p1 = Runtime.getRuntime().exec(new String[]{"sh", "-c", mkdirCmd});
-        p1.waitFor();
+            // Giải nén ZIP mod
+            unzipFromUri(zipUri, tmpDir);
 
-        Process p2 = Runtime.getRuntime().exec(new String[]{"sh", "-c", copyCmd});
-        byte[] errBytes = p2.getErrorStream().readAllBytes();
-        int result = p2.waitFor();
+            // Detect cấu trúc và tìm thư mục Resources bên trong
+            File resourcesDir = detectResourcesDir(tmpDir);
+            if (resourcesDir == null) {
+                showDialog("Lỗi", "Không tìm thấy thư mục Resources trong ZIP.\n\nZIP phải có cấu trúc:\n• Resources/...\n• files/Resources/...\n• com.garena.game.kgvn/files/Resources/...");
+                deleteDir(tmpDir);
+                return;
+            }
 
-        if (errBytes.length > 0) {
-            log("📋 " + new String(errBytes));
+            // Copy vào Resources (ghi đè)
+            boolean copied = runShell("cp -rT \"" + resourcesDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
+
+            deleteDir(tmpDir);
+
+            if (copied) {
+                showDialog("Thành công", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+            } else {
+                showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
+            }
+
+        } catch (Exception e) {
+            showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
+        } finally {
+            mainHandler.post(() -> {
+                setButtonsEnabled(true);
+                showProgress(false);
+            });
+        }
+    }
+
+    private File detectResourcesDir(File tmpDir) {
+        // Dạng 3: Resources/ trực tiếp
+        File direct = new File(tmpDir, "Resources");
+        if (direct.exists()) return direct;
+
+        // Dạng 2: files/Resources/
+        File fromFiles = new File(tmpDir, "files/Resources");
+        if (fromFiles.exists()) return fromFiles;
+
+        // Dạng 1: com.garena.game.kgvn/files/Resources/
+        File fromPackage = new File(tmpDir, "com.garena.game.kgvn/files/Resources");
+        if (fromPackage.exists()) return fromPackage;
+
+        return null;
+    }
+
+    // ─── Tính năng 3: Xóa Mod ───────────────────────────────────
+
+    private void removeMod() {
+        try {
+            boolean backupExists = fileExists(BACKUP_PATH);
+            if (!backupExists) {
+                showDialog("Thông báo", "Không tìm thấy Resources gốc (backup). Fix Resources chưa được chạy.");
+                return;
+            }
+
+            // Xóa Resources thay thế
+            boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"");
+            if (!deleted) {
+                showDialog("Lỗi", "Không thể xóa Resources hiện tại.");
+                return;
+            }
+
+            // Rename backup về tên gốc
+            boolean restored = runShell("mv \"" + BACKUP_PATH + "\" \"" + RESOURCES_PATH + "\"");
+            if (restored) {
+                showDialog("Thành công", "Đã xóa mod và khôi phục Resources gốc!");
+            } else {
+                showDialog("Lỗi", "Khôi phục Resources gốc thất bại.");
+            }
+
+        } catch (Exception e) {
+            showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
+        } finally {
+            mainHandler.post(() -> {
+                setButtonsEnabled(true);
+                showProgress(false);
+            });
+        }
+    }
+
+    // ─── Helper: Shell ───────────────────────────────────────────
+
+    private boolean runShell(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+            p.waitFor();
+            return p.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean fileExists(String path) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "[ -e \"" + path + "\" ] && echo yes"});
+            String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
+            p.waitFor();
+            return "yes".equals(out);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // ─── Helper: Download ────────────────────────────────────────
+
+    private void downloadFile(String urlStr, File dest) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(60000);
+        conn.setInstanceFollowRedirects(true);
+
+        // Follow redirects (GitHub Releases redirect)
+        int status = conn.getResponseCode();
+        if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM) {
+            String newUrl = conn.getHeaderField("Location");
+            conn = (HttpURLConnection) new URL(newUrl).openConnection();
         }
 
-        log("📤 Copy result: " + (result == 0 ? "OK" : "Fail(" + result + ")"));
-        return result == 0;
-
-    } catch (Exception e) {
-        log("❌ Lỗi: " + e.getMessage());
-        return false;
+        try (InputStream in = conn.getInputStream();
+             OutputStream out = new FileOutputStream(dest)) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+        }
     }
-}
+
+    // ─── Helper: Unzip ───────────────────────────────────────────
+
+    private void unzip(File zipFile, File destDir) throws IOException {
+        try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zipFile))) {
+            extractZip(zis, destDir);
+        }
+    }
+
+    private void unzipFromUri(Uri uri, File destDir) throws IOException {
+        try (InputStream is = getContentResolver().openInputStream(uri);
+             ZipInputStream zis = new ZipInputStream(is)) {
+            extractZip(zis, destDir);
+        }
+    }
+
+    private void extractZip(ZipInputStream zis, File destDir) throws IOException {
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            File outFile = new File(destDir, entry.getName());
+            if (entry.isDirectory()) {
+                outFile.mkdirs();
+            } else {
+                outFile.getParentFile().mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = zis.read(buf)) > 0) fos.write(buf, 0, len);
+                }
+            }
+            zis.closeEntry();
+        }
+    }
 
     private void deleteDir(File dir) {
         if (dir.isDirectory()) {
-            for (File child : dir.listFiles()) {
-                deleteDir(child);
-            }
+            File[] children = dir.listFiles();
+            if (children != null) for (File c : children) deleteDir(c);
         }
         dir.delete();
     }
 
-    private String getFileNameFromUri(Uri uri) {
-        String path = uri.getPath();
-        if (path != null) {
-            int slash = path.lastIndexOf('/');
-            if (slash >= 0) return path.substring(slash + 1);
-        }
-        return uri.toString();
-    }
+    // ─── Helper: UI ──────────────────────────────────────────────
 
-    private void log(String message) {
+    private void updateShizukuStatus(boolean granted) {
         mainHandler.post(() -> {
-            String current = tvLog.getText().toString();
-            tvLog.setText(current + "\n" + message);
+            if (granted) {
+                tvShizukuStatus.setText("Shizuku: ✅ Sẵn sàng");
+                tvShizukuStatus.setTextColor(0xFF00CC66);
+            } else {
+                tvShizukuStatus.setText("Shizuku: ❌ Chưa kết nối");
+                tvShizukuStatus.setTextColor(0xFFE94560);
+            }
         });
     }
 
-    private void updateStatus(String status) {
-        mainHandler.post(() -> tvStatus.setText(status));
+    private void showToast(String msg) {
+        mainHandler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show());
     }
 
-    private void resetUI() {
+    private void showDialog(String title, String msg) {
+        mainHandler.post(() ->
+            new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(msg)
+                .setPositiveButton("OK", null)
+                .show()
+        );
+    }
+
+    private void setButtonsEnabled(boolean enabled) {
         mainHandler.post(() -> {
-            btnInstall.setEnabled(selectedZipUri != null);
-            btnPickFile.setEnabled(true);
-            progressBar.setVisibility(View.GONE);
+            btnFixResources.setEnabled(enabled);
+            btnInstallMod.setEnabled(enabled);
+            btnRemoveMod.setEnabled(enabled);
         });
+    }
+
+    private void showProgress(boolean show) {
+        mainHandler.post(() -> progressBar.setVisibility(show ? View.VISIBLE : View.GONE));
     }
 
     @Override
