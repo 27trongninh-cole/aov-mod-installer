@@ -24,7 +24,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.concurrent.ExecutorService;
@@ -38,7 +37,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int SHIZUKU_PERMISSION_CODE = 100;
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
-    private static final String DATA_PATH = "/sdcard/Android/data/com.garena.game.kgvn/files";
+    private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
     private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
 
@@ -49,6 +48,7 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
 
     private String resourcesUrl = null;
+    private File rishFile = null;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -57,7 +57,7 @@ public class MainActivity extends AppCompatActivity {
             if (requestCode == SHIZUKU_PERMISSION_CODE) {
                 if (grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     updateShizukuStatus(true);
-                    fetchConfig();
+                    executor.execute(this::initRish);
                 } else {
                     updateShizukuStatus(false);
                     showToast("Shizuku từ chối quyền. Vui lòng thử lại.");
@@ -91,7 +91,7 @@ public class MainActivity extends AppCompatActivity {
             if (!checkShizuku()) return;
             new AlertDialog.Builder(this)
                 .setTitle("Fix Resources")
-                .setMessage("App sẽ tải và thay thế thư mục Resources. Quá trình này có thể mất vài phút tùy tốc độ mạng. Tiếp tục?")
+                .setMessage("App sẽ tải và thay thế thư mục Resources. Quá trình này có thể mất vài phút. Tiếp tục?")
                 .setPositiveButton("Tiếp tục", (d, w) -> {
                     setButtonsEnabled(false);
                     showProgress(true);
@@ -133,7 +133,7 @@ public class MainActivity extends AppCompatActivity {
         }
         if (Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             updateShizukuStatus(true);
-            fetchConfig();
+            executor.execute(this::initRish);
         } else {
             Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE);
         }
@@ -152,72 +152,92 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    // ─── Shell via Shizuku reflection ───────────────────────────
+    // ─── Init rish từ assets ─────────────────────────────────────
+
+    private void initRish() {
+        try {
+            // Extract rish từ assets vào cache
+            rishFile = new File(getCacheDir(), "rish");
+            File rishDex = new File(getCacheDir(), "rish_shizuku.dex");
+
+            extractAsset("rish", rishFile);
+            extractAsset("rish_shizuku.dex", rishDex);
+
+            // chmod +x
+            rishFile.setExecutable(true);
+
+            // Fetch config
+            fetchConfig();
+
+        } catch (Exception e) {
+            showToast("Lỗi khởi tạo rish: " + e.getMessage());
+        }
+    }
+
+    private void extractAsset(String assetName, File dest) throws IOException {
+        try (InputStream in = getAssets().open(assetName);
+             OutputStream out = new FileOutputStream(dest)) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+        }
+    }
+
+    // ─── Shell via rish ──────────────────────────────────────────
 
     private boolean runShell(String cmd) {
         try {
-            // Dùng reflection để gọi Shizuku.newProcess() với quyền shell
-            Method newProcess = Shizuku.class.getMethod(
-                "newProcess", String[].class, String[].class, String.class);
-            Process p = (Process) newProcess.invoke(null,
-                new String[]{"sh", "-c", cmd}, null, null);
+            if (rishFile == null || !rishFile.exists()) {
+                initRish();
+            }
+            ProcessBuilder pb = new ProcessBuilder(rishFile.getAbsolutePath(), "-c", cmd);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            // Đọc output để tránh buffer block
+            new BufferedReader(new InputStreamReader(p.getInputStream()))
+                .lines().forEach(l -> {});
             int exit = p.waitFor();
             return exit == 0;
         } catch (Exception e) {
-            // Fallback: thử runtime thường
-            try {
-                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
-                return p.waitFor() == 0;
-            } catch (Exception e2) {
-                return false;
-            }
+            return false;
         }
     }
 
     private boolean fileExists(String path) {
         try {
-            Method newProcess = Shizuku.class.getMethod(
-                "newProcess", String[].class, String[].class, String.class);
-            Process p = (Process) newProcess.invoke(null,
-                new String[]{"sh", "-c", "[ -e \"" + path + "\" ] && echo yes"}, null, null);
+            if (rishFile == null || !rishFile.exists()) initRish();
+            ProcessBuilder pb = new ProcessBuilder(
+                rishFile.getAbsolutePath(), "-c",
+                "[ -e \"" + path + "\" ] && echo yes || echo no");
+            Process p = pb.start();
             String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
             p.waitFor();
-            return "yes".equals(out);
+            return "yes".equals(out != null ? out.trim() : "");
         } catch (Exception e) {
-            try {
-                Process p = Runtime.getRuntime().exec(
-                    new String[]{"sh", "-c", "[ -e \"" + path + "\" ] && echo yes"});
-                String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
-                p.waitFor();
-                return "yes".equals(out);
-            } catch (Exception e2) {
-                return false;
-            }
+            return false;
         }
     }
 
-    // ─── Config ─────────────────────────────────────────────────
+    // ─── Config ──────────────────────────────────────────────────
 
     private void fetchConfig() {
-        executor.execute(() -> {
-            try {
-                HttpURLConnection conn = (HttpURLConnection) new URL(CONFIG_URL).openConnection();
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                reader.close();
-                JSONObject json = new JSONObject(sb.toString());
-                resourcesUrl = json.getString("resources_url");
-            } catch (Exception e) {
-                resourcesUrl = null;
-            }
-        });
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(CONFIG_URL).openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+            reader.close();
+            JSONObject json = new JSONObject(sb.toString());
+            resourcesUrl = json.getString("resources_url");
+        } catch (Exception e) {
+            resourcesUrl = null;
+        }
     }
 
-    // ─── Tính năng 1: Fix Resources ─────────────────────────────
+    // ─── Tính năng 1: Fix Resources ──────────────────────────────
 
     private void fixResources() {
         try {
@@ -230,7 +250,7 @@ public class MainActivity extends AppCompatActivity {
             if (!backupExists) {
                 boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
                 if (!renamed) {
-                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources. Thử khởi động lại Shizuku.");
+                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources.");
                     return;
                 }
             }
@@ -267,7 +287,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Tính năng 2: Cài file Mod ──────────────────────────────
+    // ─── Tính năng 2: Cài file Mod ───────────────────────────────
 
     private void installMod(Uri zipUri) {
         try {
@@ -314,7 +334,7 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
-    // ─── Tính năng 3: Xóa Mod ───────────────────────────────────
+    // ─── Tính năng 3: Xóa Mod ────────────────────────────────────
 
     private void removeMod() {
         try {
@@ -347,7 +367,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Helper: Download ────────────────────────────────────────
+    // ─── Helper: Download ─────────────────────────────────────────
 
     private void downloadFile(String urlStr, File dest) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
@@ -370,7 +390,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Helper: Unzip ───────────────────────────────────────────
+    // ─── Helper: Unzip ────────────────────────────────────────────
 
     private void unzip(File zipFile, File destDir) throws IOException {
         try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zipFile))) {
@@ -411,7 +431,7 @@ public class MainActivity extends AppCompatActivity {
         dir.delete();
     }
 
-    // ─── Helper: UI ──────────────────────────────────────────────
+    // ─── Helper: UI ───────────────────────────────────────────────
 
     private void updateShizukuStatus(boolean granted) {
         mainHandler.post(() -> {
