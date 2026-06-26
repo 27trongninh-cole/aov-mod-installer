@@ -1,7 +1,6 @@
 package com.modinstaller;
 
 import android.app.AlertDialog;
-import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -25,6 +24,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.concurrent.ExecutorService;
@@ -152,6 +152,50 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    // ─── Shell via Shizuku reflection ───────────────────────────
+
+    private boolean runShell(String cmd) {
+        try {
+            // Dùng reflection để gọi Shizuku.newProcess() với quyền shell
+            Method newProcess = Shizuku.class.getMethod(
+                "newProcess", String[].class, String[].class, String.class);
+            Process p = (Process) newProcess.invoke(null,
+                new String[]{"sh", "-c", cmd}, null, null);
+            int exit = p.waitFor();
+            return exit == 0;
+        } catch (Exception e) {
+            // Fallback: thử runtime thường
+            try {
+                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+                return p.waitFor() == 0;
+            } catch (Exception e2) {
+                return false;
+            }
+        }
+    }
+
+    private boolean fileExists(String path) {
+        try {
+            Method newProcess = Shizuku.class.getMethod(
+                "newProcess", String[].class, String[].class, String.class);
+            Process p = (Process) newProcess.invoke(null,
+                new String[]{"sh", "-c", "[ -e \"" + path + "\" ] && echo yes"}, null, null);
+            String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
+            p.waitFor();
+            return "yes".equals(out);
+        } catch (Exception e) {
+            try {
+                Process p = Runtime.getRuntime().exec(
+                    new String[]{"sh", "-c", "[ -e \"" + path + "\" ] && echo yes"});
+                String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
+                p.waitFor();
+                return "yes".equals(out);
+            } catch (Exception e2) {
+                return false;
+            }
+        }
+    }
+
     // ─── Config ─────────────────────────────────────────────────
 
     private void fetchConfig() {
@@ -165,11 +209,9 @@ public class MainActivity extends AppCompatActivity {
                 String line;
                 while ((line = reader.readLine()) != null) sb.append(line);
                 reader.close();
-
                 JSONObject json = new JSONObject(sb.toString());
                 resourcesUrl = json.getString("resources_url");
             } catch (Exception e) {
-                // Config fetch thất bại, tiếp tục không có URL
                 resourcesUrl = null;
             }
         });
@@ -184,41 +226,33 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            // Kiểm tra backup đã tồn tại chưa
             boolean backupExists = fileExists(BACKUP_PATH);
-
             if (!backupExists) {
-                // Rename Resources → Resources_ninfinity_backup
                 boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
                 if (!renamed) {
-                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources. Kiểm tra Shizuku có đang chạy không.");
+                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources. Thử khởi động lại Shizuku.");
                     return;
                 }
             }
 
-            // Tải Resources.zip về cache
             File zipFile = new File(getCacheDir(), "Resources.zip");
             downloadFile(resourcesUrl, zipFile);
 
-            // Tạo thư mục Resources mới
             runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
 
-            // Giải nén vào thư mục tạm rồi copy
             File tmpDir = new File(getCacheDir(), "res_tmp");
             if (tmpDir.exists()) deleteDir(tmpDir);
             tmpDir.mkdirs();
 
             unzip(zipFile, tmpDir);
 
-            // Copy từ tmp vào Resources
             boolean copied = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
 
-            // Dọn dẹp
             zipFile.delete();
             deleteDir(tmpDir);
 
             if (copied) {
-                showDialog("Thành công", "Fix Resources thành công! Khởi động lại game để thấy thay đổi.");
+                showDialog("Thành công ✅", "Fix Resources thành công! Khởi động lại game để thấy thay đổi.");
             } else {
                 showDialog("Lỗi", "Copy Resources thất bại. Thử lại.");
             }
@@ -241,10 +275,8 @@ public class MainActivity extends AppCompatActivity {
             if (tmpDir.exists()) deleteDir(tmpDir);
             tmpDir.mkdirs();
 
-            // Giải nén ZIP mod
             unzipFromUri(zipUri, tmpDir);
 
-            // Detect cấu trúc và tìm thư mục Resources bên trong
             File resourcesDir = detectResourcesDir(tmpDir);
             if (resourcesDir == null) {
                 showDialog("Lỗi", "Không tìm thấy thư mục Resources trong ZIP.\n\nZIP phải có cấu trúc:\n• Resources/...\n• files/Resources/...\n• com.garena.game.kgvn/files/Resources/...");
@@ -252,13 +284,12 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            // Copy vào Resources (ghi đè)
             boolean copied = runShell("cp -rT \"" + resourcesDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
 
             deleteDir(tmpDir);
 
             if (copied) {
-                showDialog("Thành công", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+                showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
             } else {
                 showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
             }
@@ -274,18 +305,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private File detectResourcesDir(File tmpDir) {
-        // Dạng 3: Resources/ trực tiếp
         File direct = new File(tmpDir, "Resources");
         if (direct.exists()) return direct;
-
-        // Dạng 2: files/Resources/
         File fromFiles = new File(tmpDir, "files/Resources");
         if (fromFiles.exists()) return fromFiles;
-
-        // Dạng 1: com.garena.game.kgvn/files/Resources/
         File fromPackage = new File(tmpDir, "com.garena.game.kgvn/files/Resources");
         if (fromPackage.exists()) return fromPackage;
-
         return null;
     }
 
@@ -299,17 +324,15 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            // Xóa Resources thay thế
             boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"");
             if (!deleted) {
                 showDialog("Lỗi", "Không thể xóa Resources hiện tại.");
                 return;
             }
 
-            // Rename backup về tên gốc
             boolean restored = runShell("mv \"" + BACKUP_PATH + "\" \"" + RESOURCES_PATH + "\"");
             if (restored) {
-                showDialog("Thành công", "Đã xóa mod và khôi phục Resources gốc!");
+                showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!");
             } else {
                 showDialog("Lỗi", "Khôi phục Resources gốc thất bại.");
             }
@@ -324,29 +347,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Helper: Shell ───────────────────────────────────────────
-
-    private boolean runShell(String cmd) {
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
-            p.waitFor();
-            return p.exitValue() == 0;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private boolean fileExists(String path) {
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "[ -e \"" + path + "\" ] && echo yes"});
-            String out = new BufferedReader(new InputStreamReader(p.getInputStream())).readLine();
-            p.waitFor();
-            return "yes".equals(out);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     // ─── Helper: Download ────────────────────────────────────────
 
     private void downloadFile(String urlStr, File dest) throws IOException {
@@ -355,9 +355,9 @@ public class MainActivity extends AppCompatActivity {
         conn.setReadTimeout(60000);
         conn.setInstanceFollowRedirects(true);
 
-        // Follow redirects (GitHub Releases redirect)
         int status = conn.getResponseCode();
-        if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM) {
+        if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM
+                || status == 307 || status == 308) {
             String newUrl = conn.getHeaderField("Location");
             conn = (HttpURLConnection) new URL(newUrl).openConnection();
         }
