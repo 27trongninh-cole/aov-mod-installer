@@ -157,8 +157,8 @@ public class MainActivity extends AppCompatActivity {
     private void initRish() {
         try {
             // Extract rish từ assets vào cache
-            rishFile = new File(getCacheDir(), "rish");
-            File rishDex = new File(getCacheDir(), "rish_shizuku.dex");
+            rishFile = new File(getFilesDir(), "rish");
+            File rishDex = new File(getFilesDir(), "rish_shizuku.dex");
 
             extractAsset("rish", rishFile);
             extractAsset("rish_shizuku.dex", rishDex);
