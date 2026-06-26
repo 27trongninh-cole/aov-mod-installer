@@ -220,64 +220,34 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean copyWithShizuku(String srcPath, String targetPath) {
-        try {
-            // Dùng Shizuku để chạy shell với quyền cao hơn
-            String[] cmd = new String[]{
-                "sh", "-c",
-                "cp -r \"" + srcPath + "/.\" \"" + targetPath + "/\""
-            };
-
-            Process process = Runtime.getRuntime().exec(
-                new String[]{"sh", "-c",
-                    "cp -rT \"" + srcPath + "\" \"" + targetPath + "\""}
-            );
-
-            // Đọc output
-            byte[] errorBytes = process.getErrorStream().readAllBytes();
-            int exitCode = process.waitFor();
-
-            if (exitCode != 0 && errorBytes.length > 0) {
-                String error = new String(errorBytes);
-                log("⚠️ Shell output: " + error);
-
-                // Thử dùng Shizuku execute nếu cp thường fail
-                return copyWithShizukuExecute(srcPath, targetPath);
-            }
-
-            return exitCode == 0;
-
-        } catch (Exception e) {
-            log("⚠️ Thử phương pháp khác...");
-            return copyWithShizukuExecute(srcPath, targetPath);
-        }
-    }
+    return copyWithShizukuExecute(srcPath, targetPath);
+}
 
     private boolean copyWithShizukuExecute(String srcPath, String targetPath) {
-        try {
-            // Tạo target dir trước
-            String mkdirCmd = "mkdir -p \"" + targetPath + "\"";
-            String copyCmd = "cp -rT \"" + srcPath + "\" \"" + targetPath + "\"";
+    try {
+        String mkdirCmd = "mkdir -p \"" + targetPath + "\"";
+        String copyCmd = "cp -rT \"" + srcPath + "\" \"" + targetPath + "\"";
 
-            int result1 = Shizuku.newProcess(new String[]{"sh", "-c", mkdirCmd}, null, null)
-                .waitFor();
-            log("📁 Tạo thư mục đích: " + (result1 == 0 ? "OK" : "Fail(" + result1 + ")"));
+        // Dùng Runtime với shell thường trước
+        Process p1 = Runtime.getRuntime().exec(new String[]{"sh", "-c", mkdirCmd});
+        p1.waitFor();
 
-            Process p = Shizuku.newProcess(new String[]{"sh", "-c", copyCmd}, null, null);
-            byte[] errBytes = p.getErrorStream().readAllBytes();
-            int result2 = p.waitFor();
+        Process p2 = Runtime.getRuntime().exec(new String[]{"sh", "-c", copyCmd});
+        byte[] errBytes = p2.getErrorStream().readAllBytes();
+        int result = p2.waitFor();
 
-            if (errBytes.length > 0) {
-                log("📋 " + new String(errBytes));
-            }
-
-            log("📤 Copy result: " + (result2 == 0 ? "OK" : "Fail(" + result2 + ")"));
-            return result2 == 0;
-
-        } catch (Exception e) {
-            log("❌ Shizuku execute lỗi: " + e.getMessage());
-            return false;
+        if (errBytes.length > 0) {
+            log("📋 " + new String(errBytes));
         }
+
+        log("📤 Copy result: " + (result == 0 ? "OK" : "Fail(" + result + ")"));
+        return result == 0;
+
+    } catch (Exception e) {
+        log("❌ Lỗi: " + e.getMessage());
+        return false;
     }
+}
 
     private void deleteDir(File dir) {
         if (dir.isDirectory()) {
