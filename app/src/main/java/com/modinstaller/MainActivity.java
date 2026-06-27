@@ -52,6 +52,12 @@ public class MainActivity extends AppCompatActivity {
     private Button btnRemoveMod;
     private ProgressBar progressBar;
 
+    // Progress dialog
+    private AlertDialog progressDialog;
+    private TextView tvProgressMsg;
+    private TextView tvProgressPercent;
+    private ProgressBar progressBarDialog;
+
     private String resourcesUrl = null;
     private String resourcesHash = null;
     private File rishFile = null;
@@ -127,6 +133,65 @@ public class MainActivity extends AppCompatActivity {
         });
 
         checkShizukuAndInit();
+    }
+
+    // ─── Progress Dialog ─────────────────────────────────────────
+
+    private void showProgressDialog(String title) {
+        mainHandler.post(() -> {
+            android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+            layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+            layout.setPadding(60, 40, 60, 20);
+
+            tvProgressMsg = new TextView(this);
+            tvProgressMsg.setText(title);
+            tvProgressMsg.setTextSize(14);
+            tvProgressMsg.setTextColor(0xFFFFFFFF);
+            tvProgressMsg.setPadding(0, 0, 0, 16);
+            layout.addView(tvProgressMsg);
+
+            progressBarDialog = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            progressBarDialog.setMax(100);
+            progressBarDialog.setProgress(0);
+            progressBarDialog.setIndeterminate(false);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 24);
+            progressBarDialog.setLayoutParams(lp);
+            layout.addView(progressBarDialog);
+
+            tvProgressPercent = new TextView(this);
+            tvProgressPercent.setText("0%");
+            tvProgressPercent.setTextSize(12);
+            tvProgressPercent.setTextColor(0xFF888888);
+            tvProgressPercent.setGravity(android.view.Gravity.END);
+            tvProgressPercent.setPadding(0, 8, 0, 0);
+            layout.addView(tvProgressPercent);
+
+            progressDialog = new AlertDialog.Builder(this)
+                .setView(layout)
+                .setCancelable(false)
+                .create();
+            progressDialog.show();
+        });
+    }
+
+    private void updateProgressDialog(String msg, int percent) {
+        mainHandler.post(() -> {
+            if (progressDialog != null && progressDialog.isShowing()) {
+                if (tvProgressMsg != null) tvProgressMsg.setText(msg);
+                if (progressBarDialog != null) progressBarDialog.setProgress(percent);
+                if (tvProgressPercent != null) tvProgressPercent.setText(percent + "%");
+            }
+        });
+    }
+
+    private void dismissProgressDialog() {
+        mainHandler.post(() -> {
+            if (progressDialog != null && progressDialog.isShowing()) {
+                progressDialog.dismiss();
+                progressDialog = null;
+            }
+        });
     }
 
     // ─── Shizuku ────────────────────────────────────────────────
@@ -293,46 +358,52 @@ public class MainActivity extends AppCompatActivity {
                 && backupZip.exists();
 
             if (!hashMatch) {
-                // Tải Resources.zip mới về
-                showToast("Đang tải Resources mới...");
-                downloadFile(resourcesUrl, backupZip);
+                showProgressDialog("Đang tải Resources...");
+                updateProgressDialog("Đang tải Resources từ server...", 0);
+                downloadFileWithProgress(resourcesUrl, backupZip);
+                updateProgressDialog("Kiểm tra file...", 95);
 
-                // Verify MD5
                 String downloadedHash = md5OfFile(backupZip);
                 if (!resourcesHash.isEmpty() && !resourcesHash.equals(downloadedHash)) {
                     backupZip.delete();
+                    dismissProgressDialog();
                     showDialog("Lỗi", "File tải về bị lỗi (hash không khớp). Thử lại.");
                     return;
                 }
-
-                // Lưu hash mới
                 saveHash(downloadedHash.isEmpty() ? resourcesHash : downloadedHash);
-                showToast("Tải xong! Đang cài đặt...");
-            } else {
-                showToast("Dùng backup có sẵn...");
+                updateProgressDialog("Tải xong!", 100);
+                dismissProgressDialog();
             }
 
-            // Rename Resources gốc → backup (nếu chưa có backup)
+            showProgressDialog("Đang cài đặt...");
+            updateProgressDialog("Chuẩn bị thư mục...", 10);
+
             boolean backupExists = fileExists(BACKUP_PATH);
             if (!backupExists) {
+                updateProgressDialog("Đổi tên Resources gốc...", 20);
                 boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
                 if (!renamed) {
+                    dismissProgressDialog();
                     showDialog("Lỗi", "Không thể đổi tên thư mục Resources.");
                     return;
                 }
             }
 
-            // Giải nén backup zip vào Resources mới
+            updateProgressDialog("Tạo thư mục Resources mới...", 35);
             runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
 
+            updateProgressDialog("Đang giải nén...", 50);
             File tmpDir = new File(getCacheDir(), "res_tmp");
             if (tmpDir.exists()) deleteDir(tmpDir);
             tmpDir.mkdirs();
-
             unzip(backupZip, tmpDir);
 
+            updateProgressDialog("Đang copy files...", 80);
             boolean copied = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
             deleteDir(tmpDir);
+
+            updateProgressDialog("Hoàn tất!", 100);
+            dismissProgressDialog();
 
             if (copied) {
                 showDialog("Thành công ✅", "Fix Resources thành công! Khởi động lại game để thấy thay đổi.");
@@ -341,6 +412,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
         } catch (Exception e) {
+            dismissProgressDialog();
             showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
         } finally {
             mainHandler.post(() -> {
@@ -354,21 +426,29 @@ public class MainActivity extends AppCompatActivity {
 
     private void installMod(Uri zipUri) {
         try {
+            showProgressDialog("Đang cài mod...");
+            updateProgressDialog("Đang giải nén file mod...", 20);
+
             File tmpDir = new File(getCacheDir(), "mod_tmp");
             if (tmpDir.exists()) deleteDir(tmpDir);
             tmpDir.mkdirs();
-
             unzipFromUri(zipUri, tmpDir);
 
+            updateProgressDialog("Đang phát hiện cấu trúc...", 40);
             File resourcesDir = detectResourcesDir(tmpDir);
             if (resourcesDir == null) {
-                showDialog("Lỗi", "Không tìm thấy thư mục Resources trong ZIP.\n\nZIP phải có cấu trúc:\n• Resources/...\n• files/Resources/...\n• com.garena.game.kgvn/files/Resources/...");
                 deleteDir(tmpDir);
+                dismissProgressDialog();
+                showDialog("Lỗi", "Không tìm thấy thư mục Resources trong ZIP.\n\nZIP phải có cấu trúc:\n• Resources/...\n• files/Resources/...\n• com.garena.game.kgvn/files/Resources/...");
                 return;
             }
 
+            updateProgressDialog("Đang copy mod vào game...", 70);
             boolean copied = runShell("cp -rT \"" + resourcesDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
             deleteDir(tmpDir);
+
+            updateProgressDialog("Hoàn tất!", 100);
+            dismissProgressDialog();
 
             if (copied) {
                 showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
@@ -377,6 +457,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
         } catch (Exception e) {
+            dismissProgressDialog();
             showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
         } finally {
             mainHandler.post(() -> {
@@ -401,32 +482,35 @@ public class MainActivity extends AppCompatActivity {
     private void removeMod() {
         try {
             File backupZip = new File(getFilesDir(), "resources_backup.zip");
-
             if (!backupZip.exists()) {
                 showDialog("Lỗi", "Không có backup Resources. Hãy chạy Fix Resources trước.");
                 return;
             }
 
-            // Xóa Resources hiện tại (đã mod)
+            showProgressDialog("Đang xóa mod...");
+            updateProgressDialog("Đang xóa Resources hiện tại...", 20);
             boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"");
             if (!deleted) {
+                dismissProgressDialog();
                 showDialog("Lỗi", "Không thể xóa Resources hiện tại.");
                 return;
             }
 
-            // Giải nén backup zip về Resources gốc
+            updateProgressDialog("Đang giải nén Resources gốc...", 40);
             runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
-
             File tmpDir = new File(getCacheDir(), "res_tmp");
             if (tmpDir.exists()) deleteDir(tmpDir);
             tmpDir.mkdirs();
-
             unzip(backupZip, tmpDir);
+
+            updateProgressDialog("Đang khôi phục...", 75);
             boolean restored = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
             deleteDir(tmpDir);
 
-            // Xóa Resources_ninfinity_backup nếu còn
             runShell("rm -rf \"" + BACKUP_PATH + "\"");
+
+            updateProgressDialog("Hoàn tất!", 100);
+            dismissProgressDialog();
 
             if (restored) {
                 showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!");
@@ -435,6 +519,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
         } catch (Exception e) {
+            dismissProgressDialog();
             showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
         } finally {
             mainHandler.post(() -> {
@@ -444,9 +529,9 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Helper: Download ─────────────────────────────────────────
+    // ─── Helper: Download with progress ──────────────────────────
 
-    private void downloadFile(String urlStr, File dest) throws IOException {
+    private void downloadFileWithProgress(String urlStr, File dest) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(120000);
@@ -459,11 +544,23 @@ public class MainActivity extends AppCompatActivity {
             conn = (HttpURLConnection) new URL(newUrl).openConnection();
         }
 
+        long totalSize = conn.getContentLengthLong();
+
         try (InputStream in = conn.getInputStream();
              OutputStream out = new FileOutputStream(dest)) {
             byte[] buf = new byte[8192];
+            long downloaded = 0;
             int len;
-            while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+                downloaded += len;
+                if (totalSize > 0) {
+                    int percent = (int) (downloaded * 90 / totalSize); // 0-90%
+                    String sizeMB = String.format("%.1f / %.1f MB",
+                        downloaded / 1024f / 1024f, totalSize / 1024f / 1024f);
+                    updateProgressDialog("Đang tải... " + sizeMB, percent);
+                }
+            }
         }
     }
 
