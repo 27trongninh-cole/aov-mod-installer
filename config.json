@@ -1,5 +1,6 @@
 {
   "game_version": "1.62.1",
   "resources_url": "https://github.com/27trongninh-cole/aov-mod-installer/releases/download/resources/Resources.zip",
+  "resources_hash": "",
   "app_version_required": "1.0"
 }
