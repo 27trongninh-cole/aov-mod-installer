@@ -212,12 +212,33 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean checkShizuku() {
         if (!Shizuku.pingBinder()) {
-            showToast("Shizuku chưa chạy!");
+            mainHandler.post(() ->
+                new AlertDialog.Builder(this)
+                    .setTitle("Shizuku chưa chạy")
+                    .setMessage("Cần mở Shizuku và bấm Start trước khi sử dụng tính năng này.")
+                    .setPositiveButton("Mở Shizuku", (d, w) -> {
+                        try {
+                            startActivity(getPackageManager()
+                                .getLaunchIntentForPackage("moe.shizuku.privileged.api"));
+                        } catch (Exception e) {
+                            showToast("Không tìm thấy app Shizuku. Hãy cài Shizuku trước!");
+                        }
+                    })
+                    .setNegativeButton("Hủy", null)
+                    .show()
+            );
             return false;
         }
         if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            showToast("Chưa có quyền Shizuku!");
-            Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE);
+            mainHandler.post(() ->
+                new AlertDialog.Builder(this)
+                    .setTitle("Chưa có quyền Shizuku")
+                    .setMessage("App cần được Shizuku cấp quyền để hoạt động.")
+                    .setPositiveButton("Cấp quyền", (d, w) ->
+                        Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE))
+                    .setNegativeButton("Hủy", null)
+                    .show()
+            );
             return false;
         }
         return true;
