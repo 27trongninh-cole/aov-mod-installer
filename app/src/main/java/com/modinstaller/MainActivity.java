@@ -399,7 +399,12 @@ public class MainActivity extends AppCompatActivity {
             unzip(backupZip, tmpDir);
 
             updateProgressDialog("Đang copy files...", 80);
-            boolean copied = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
+            // ZIP có cấu trúc Resources/... nên sau giải nén copy từ res_tmp/Resources/
+            File extractedResources = new File(tmpDir, "Resources");
+            String copySrc = extractedResources.exists()
+                ? extractedResources.getAbsolutePath()
+                : tmpDir.getAbsolutePath();
+            boolean copied = runShell("cp -rT \"" + copySrc + "\" \"" + RESOURCES_PATH + "\"");
             deleteDir(tmpDir);
 
             updateProgressDialog("Hoàn tất!", 100);
@@ -504,7 +509,11 @@ public class MainActivity extends AppCompatActivity {
             unzip(backupZip, tmpDir);
 
             updateProgressDialog("Đang khôi phục...", 75);
-            boolean restored = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
+            File extractedResources2 = new File(tmpDir, "Resources");
+            String copySrc2 = extractedResources2.exists()
+                ? extractedResources2.getAbsolutePath()
+                : tmpDir.getAbsolutePath();
+            boolean restored = runShell("cp -rT \"" + copySrc2 + "\" \"" + RESOURCES_PATH + "\"");
             deleteDir(tmpDir);
 
             runShell("rm -rf \"" + BACKUP_PATH + "\"");
