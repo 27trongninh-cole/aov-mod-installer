@@ -390,8 +390,8 @@ public class MainActivity extends AppCompatActivity {
             }
 
             updateProgressDialog("Chuẩn bị giải nén...", 35);
-            // Copy zip ra sdcard để rish có thể đọc
-            File tmpZip = new File("/sdcard/mod_ninstaller_tmp.zip");
+            // Copy zip ra external cache để rish có thể đọc
+            File tmpZip = new File(getExternalCacheDir(), "mod_ninstaller_tmp.zip");
             copyFile(backupZip, tmpZip);
 
             updateProgressDialog("Đang giải nén vào game...", 55);
@@ -496,8 +496,8 @@ public class MainActivity extends AppCompatActivity {
             }
 
             updateProgressDialog("Đang giải nén Resources gốc...", 40);
-            // Copy zip ra sdcard để rish có thể đọc
-            File tmpZip2 = new File("/sdcard/mod_ninstaller_tmp.zip");
+            // Copy zip ra external cache để rish có thể đọc
+            File tmpZip2 = new File(getExternalCacheDir(), "mod_ninstaller_tmp.zip");
             copyFile(backupZip, tmpZip2);
 
             updateProgressDialog("Đang khôi phục...", 65);
@@ -662,4 +662,3 @@ public class MainActivity extends AppCompatActivity {
         executor.shutdown();
     }
 }
- 
