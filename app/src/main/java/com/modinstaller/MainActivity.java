@@ -1,6 +1,7 @@
 package com.modinstaller;
 
 import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -19,6 +20,7 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,6 +28,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -40,6 +43,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
     private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
+    private static final String PREF_NAME = "mod_ninstaller";
+    private static final String PREF_HASH = "resources_hash";
 
     private TextView tvShizukuStatus;
     private Button btnFixResources;
@@ -48,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
 
     private String resourcesUrl = null;
+    private String resourcesHash = null;
     private File rishFile = null;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -91,7 +97,7 @@ public class MainActivity extends AppCompatActivity {
             if (!checkShizuku()) return;
             new AlertDialog.Builder(this)
                 .setTitle("Fix Resources")
-                .setMessage("App sẽ tải và thay thế thư mục Resources. Quá trình này có thể mất vài phút. Tiếp tục?")
+                .setMessage("App sẽ thay thế thư mục Resources. Tiếp tục?")
                 .setPositiveButton("Tiếp tục", (d, w) -> {
                     setButtonsEnabled(false);
                     showProgress(true);
@@ -110,7 +116,7 @@ public class MainActivity extends AppCompatActivity {
             if (!checkShizuku()) return;
             new AlertDialog.Builder(this)
                 .setTitle("Xóa tất cả Mod")
-                .setMessage("App sẽ xóa Resources đã thay thế và khôi phục Resources gốc. Tiếp tục?")
+                .setMessage("App sẽ khôi phục Resources gốc. Tiếp tục?")
                 .setPositiveButton("Tiếp tục", (d, w) -> {
                     setButtonsEnabled(false);
                     showProgress(true);
@@ -152,23 +158,16 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    // ─── Init rish từ assets ─────────────────────────────────────
+    // ─── Init rish ───────────────────────────────────────────────
 
     private void initRish() {
         try {
-            // Extract rish từ assets vào cache
             rishFile = new File(getFilesDir(), "rish");
             File rishDex = new File(getFilesDir(), "rish_shizuku.dex");
-
             extractAsset("rish", rishFile);
             extractAsset("rish_shizuku.dex", rishDex);
-
-            // chmod +x
             rishFile.setExecutable(true);
-
-            // Fetch config
             fetchConfig();
-
         } catch (Exception e) {
             showToast("Lỗi khởi tạo rish: " + e.getMessage());
         }
@@ -204,9 +203,7 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean runShell(String cmd) {
         try {
-            if (rishFile == null || !rishFile.exists()) {
-                initRish();
-            }
+            if (rishFile == null || !rishFile.exists()) initRish();
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
@@ -248,9 +245,36 @@ public class MainActivity extends AppCompatActivity {
             reader.close();
             JSONObject json = new JSONObject(sb.toString());
             resourcesUrl = json.getString("resources_url");
+            resourcesHash = json.optString("resources_hash", "");
         } catch (Exception e) {
             resourcesUrl = null;
+            resourcesHash = null;
         }
+    }
+
+    // ─── Hash ────────────────────────────────────────────────────
+
+    private String md5OfFile(File file) {
+        try (FileInputStream fis = new FileInputStream(file)) {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = fis.read(buf)) > 0) md.update(buf, 0, len);
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String getSavedHash() {
+        return getSharedPreferences(PREF_NAME, MODE_PRIVATE).getString(PREF_HASH, "");
+    }
+
+    private void saveHash(String hash) {
+        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putString(PREF_HASH, hash).apply();
     }
 
     // ─── Tính năng 1: Fix Resources ──────────────────────────────
@@ -258,34 +282,56 @@ public class MainActivity extends AppCompatActivity {
     private void fixResources() {
         try {
             if (resourcesUrl == null) {
-                showDialog("Lỗi", "Không lấy được config từ server. Kiểm tra kết nối mạng và thử lại.");
+                showDialog("Lỗi", "Không lấy được config từ server. Kiểm tra kết nối mạng.");
                 return;
             }
 
+            File backupZip = new File(getFilesDir(), "resources_backup.zip");
+            String savedHash = getSavedHash();
+            boolean hashMatch = !resourcesHash.isEmpty()
+                && resourcesHash.equals(savedHash)
+                && backupZip.exists();
+
+            if (!hashMatch) {
+                // Tải Resources.zip mới về
+                showToast("Đang tải Resources mới...");
+                downloadFile(resourcesUrl, backupZip);
+
+                // Verify MD5
+                String downloadedHash = md5OfFile(backupZip);
+                if (!resourcesHash.isEmpty() && !resourcesHash.equals(downloadedHash)) {
+                    backupZip.delete();
+                    showDialog("Lỗi", "File tải về bị lỗi (hash không khớp). Thử lại.");
+                    return;
+                }
+
+                // Lưu hash mới
+                saveHash(downloadedHash.isEmpty() ? resourcesHash : downloadedHash);
+                showToast("Tải xong! Đang cài đặt...");
+            } else {
+                showToast("Dùng backup có sẵn...");
+            }
+
+            // Rename Resources gốc → backup (nếu chưa có backup)
             boolean backupExists = fileExists(BACKUP_PATH);
             if (!backupExists) {
                 boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
                 if (!renamed) {
-                    String debug = runShellOutput("echo rishOK; ls \"" + DATA_PATH + "\"; mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\" 2>&1; echo exitcode:$?");
-                    showDialog("Lỗi debug", "rish path: " + (rishFile != null ? rishFile.getAbsolutePath() : "null") + "\nexists: " + (rishFile != null && rishFile.exists()) + "\n\n" + debug);
+                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources.");
                     return;
                 }
             }
 
-            File zipFile = new File(getCacheDir(), "Resources.zip");
-            downloadFile(resourcesUrl, zipFile);
-
+            // Giải nén backup zip vào Resources mới
             runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
 
             File tmpDir = new File(getCacheDir(), "res_tmp");
             if (tmpDir.exists()) deleteDir(tmpDir);
             tmpDir.mkdirs();
 
-            unzip(zipFile, tmpDir);
+            unzip(backupZip, tmpDir);
 
             boolean copied = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
-
-            zipFile.delete();
             deleteDir(tmpDir);
 
             if (copied) {
@@ -322,7 +368,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
             boolean copied = runShell("cp -rT \"" + resourcesDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
-
             deleteDir(tmpDir);
 
             if (copied) {
@@ -355,23 +400,38 @@ public class MainActivity extends AppCompatActivity {
 
     private void removeMod() {
         try {
-            boolean backupExists = fileExists(BACKUP_PATH);
-            if (!backupExists) {
-                showDialog("Thông báo", "Không tìm thấy Resources gốc (backup). Fix Resources chưa được chạy.");
+            File backupZip = new File(getFilesDir(), "resources_backup.zip");
+
+            if (!backupZip.exists()) {
+                showDialog("Lỗi", "Không có backup Resources. Hãy chạy Fix Resources trước.");
                 return;
             }
 
+            // Xóa Resources hiện tại (đã mod)
             boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"");
             if (!deleted) {
                 showDialog("Lỗi", "Không thể xóa Resources hiện tại.");
                 return;
             }
 
-            boolean restored = runShell("mv \"" + BACKUP_PATH + "\" \"" + RESOURCES_PATH + "\"");
+            // Giải nén backup zip về Resources gốc
+            runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
+
+            File tmpDir = new File(getCacheDir(), "res_tmp");
+            if (tmpDir.exists()) deleteDir(tmpDir);
+            tmpDir.mkdirs();
+
+            unzip(backupZip, tmpDir);
+            boolean restored = runShell("cp -rT \"" + tmpDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
+            deleteDir(tmpDir);
+
+            // Xóa Resources_ninfinity_backup nếu còn
+            runShell("rm -rf \"" + BACKUP_PATH + "\"");
+
             if (restored) {
                 showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!");
             } else {
-                showDialog("Lỗi", "Khôi phục Resources gốc thất bại.");
+                showDialog("Lỗi", "Khôi phục Resources thất bại.");
             }
 
         } catch (Exception e) {
@@ -389,7 +449,7 @@ public class MainActivity extends AppCompatActivity {
     private void downloadFile(String urlStr, File dest) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         conn.setConnectTimeout(30000);
-        conn.setReadTimeout(60000);
+        conn.setReadTimeout(120000);
         conn.setInstanceFollowRedirects(true);
 
         int status = conn.getResponseCode();
@@ -410,7 +470,7 @@ public class MainActivity extends AppCompatActivity {
     // ─── Helper: Unzip ────────────────────────────────────────────
 
     private void unzip(File zipFile, File destDir) throws IOException {
-        try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zipFile))) {
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFile))) {
             extractZip(zis, destDir);
         }
     }
@@ -463,7 +523,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showToast(String msg) {
-        mainHandler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show());
+        mainHandler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
     }
 
     private void showDialog(String title, String msg) {
@@ -495,3 +555,4 @@ public class MainActivity extends AppCompatActivity {
         executor.shutdown();
     }
 }
+ 
