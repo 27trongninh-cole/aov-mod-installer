@@ -389,23 +389,17 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            updateProgressDialog("Tạo thư mục Resources mới...", 35);
-            runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
+            updateProgressDialog("Chuẩn bị giải nén...", 35);
+            // Copy zip ra sdcard để rish có thể đọc
+            File tmpZip = new File("/sdcard/mod_ninstaller_tmp.zip");
+            copyFile(backupZip, tmpZip);
 
-            updateProgressDialog("Đang giải nén...", 50);
-            File tmpDir = new File(getCacheDir(), "res_tmp");
-            if (tmpDir.exists()) deleteDir(tmpDir);
-            tmpDir.mkdirs();
-            unzip(backupZip, tmpDir);
+            updateProgressDialog("Đang giải nén vào game...", 55);
+            // rish unzip thẳng vào Android/data, ZIP có cấu trúc Resources/...
+            boolean copied = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\"");
 
-            updateProgressDialog("Đang copy files...", 80);
-            // ZIP có cấu trúc Resources/... nên sau giải nén copy từ res_tmp/Resources/
-            File extractedResources = new File(tmpDir, "Resources");
-            String copySrc = extractedResources.exists()
-                ? extractedResources.getAbsolutePath()
-                : tmpDir.getAbsolutePath();
-            boolean copied = runShell("cp -rT \"" + copySrc + "\" \"" + RESOURCES_PATH + "\"");
-            deleteDir(tmpDir);
+            updateProgressDialog("Dọn dẹp...", 90);
+            tmpZip.delete();
 
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
@@ -502,19 +496,15 @@ public class MainActivity extends AppCompatActivity {
             }
 
             updateProgressDialog("Đang giải nén Resources gốc...", 40);
-            runShell("mkdir -p \"" + RESOURCES_PATH + "\"");
-            File tmpDir = new File(getCacheDir(), "res_tmp");
-            if (tmpDir.exists()) deleteDir(tmpDir);
-            tmpDir.mkdirs();
-            unzip(backupZip, tmpDir);
+            // Copy zip ra sdcard để rish có thể đọc
+            File tmpZip2 = new File("/sdcard/mod_ninstaller_tmp.zip");
+            copyFile(backupZip, tmpZip2);
 
-            updateProgressDialog("Đang khôi phục...", 75);
-            File extractedResources2 = new File(tmpDir, "Resources");
-            String copySrc2 = extractedResources2.exists()
-                ? extractedResources2.getAbsolutePath()
-                : tmpDir.getAbsolutePath();
-            boolean restored = runShell("cp -rT \"" + copySrc2 + "\" \"" + RESOURCES_PATH + "\"");
-            deleteDir(tmpDir);
+            updateProgressDialog("Đang khôi phục...", 65);
+            boolean restored = runShell("unzip -o \"" + tmpZip2.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\"");
+
+            updateProgressDialog("Dọn dẹp...", 90);
+            tmpZip2.delete();
 
             runShell("rm -rf \"" + BACKUP_PATH + "\"");
 
@@ -535,6 +525,17 @@ public class MainActivity extends AppCompatActivity {
                 setButtonsEnabled(true);
                 showProgress(false);
             });
+        }
+    }
+
+    // ─── Helper: Copy file ────────────────────────────────────────
+
+    private void copyFile(File src, File dest) throws IOException {
+        try (InputStream in = new FileInputStream(src);
+             OutputStream out = new FileOutputStream(dest)) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
         }
     }
 
