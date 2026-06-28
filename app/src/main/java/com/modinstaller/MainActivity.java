@@ -250,6 +250,14 @@ public class MainActivity extends AppCompatActivity {
         try {
             rishFile = new File(getFilesDir(), "rish");
             File rishDex = new File(getFilesDir(), "rish_shizuku.dex");
+
+            // Xóa file cũ trước (rish_shizuku.dex bị chmod 400 sau lần chạy đầu)
+            if (rishFile.exists()) rishFile.delete();
+            if (rishDex.exists()) {
+                rishDex.setWritable(true);
+                rishDex.delete();
+            }
+
             extractAsset("rish", rishFile);
             extractAsset("rish_shizuku.dex", rishDex);
             rishFile.setExecutable(true);
