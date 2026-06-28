@@ -455,30 +455,29 @@ public class MainActivity extends AppCompatActivity {
     private void installMod(Uri zipUri) {
         try {
             showProgressDialog("Đang cài mod...");
-            updateProgressDialog("Đang giải nén file mod...", 20);
+            updateProgressDialog("Đang copy file mod...", 20);
 
-            File tmpDir = new File(getCacheDir(), "mod_tmp");
-            if (tmpDir.exists()) deleteDir(tmpDir);
-            tmpDir.mkdirs();
-            unzipFromUri(zipUri, tmpDir);
-
-            updateProgressDialog("Đang phát hiện cấu trúc...", 40);
-            File resourcesDir = detectResourcesDir(tmpDir);
-            if (resourcesDir == null) {
-                deleteDir(tmpDir);
-                dismissProgressDialog();
-                showDialog("Lỗi", "Không tìm thấy thư mục Resources trong ZIP.\n\nZIP phải có cấu trúc:\n• Resources/...\n• files/Resources/...\n• com.garena.game.kgvn/files/Resources/...");
-                return;
+            // Copy zip ra external cache để rish có thể đọc
+            File tmpZip = new File(getExternalCacheDir(), "mod_tmp.zip");
+            try (InputStream is = getContentResolver().openInputStream(zipUri);
+                 OutputStream os = new FileOutputStream(tmpZip)) {
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = is.read(buf)) > 0) os.write(buf, 0, len);
             }
 
-            updateProgressDialog("Đang copy mod vào game...", 70);
-            boolean copied = runShell("cp -rT \"" + resourcesDir.getAbsolutePath() + "\" \"" + RESOURCES_PATH + "\"");
-            deleteDir(tmpDir);
+            updateProgressDialog("Đang phát hiện cấu trúc...", 40);
+            // Detect cấu trúc ZIP để biết unzip vào đâu
+            String unzipDest = detectUnzipDest(zipUri);
+
+            updateProgressDialog("Đang cài mod vào game...", 70);
+            boolean success = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + unzipDest + "\"");
+            tmpZip.delete();
 
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
 
-            if (copied) {
+            if (success) {
                 showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
             } else {
                 showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
@@ -495,14 +494,28 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private File detectResourcesDir(File tmpDir) {
-        File direct = new File(tmpDir, "Resources");
-        if (direct.exists()) return direct;
-        File fromFiles = new File(tmpDir, "files/Resources");
-        if (fromFiles.exists()) return fromFiles;
-        File fromPackage = new File(tmpDir, "com.garena.game.kgvn/files/Resources");
-        if (fromPackage.exists()) return fromPackage;
-        return null;
+    private String detectUnzipDest(Uri zipUri) {
+        // Dựa vào cấu trúc ZIP để xác định thư mục đích
+        // Dạng 1: com.garena.game.kgvn/files/Resources/... → unzip vào Android/data/
+        // Dạng 2: files/Resources/... → unzip vào Android/data/com.garena.game.kgvn/
+        // Dạng 3: Resources/... → unzip vào Android/data/com.garena.game.kgvn/files/
+        try (InputStream is = getContentResolver().openInputStream(zipUri);
+             ZipInputStream zis = new ZipInputStream(is)) {
+            ZipEntry entry = zis.getNextEntry();
+            if (entry != null) {
+                String name = entry.getName();
+                if (name.startsWith("com.garena.game.kgvn/")) {
+                    return "/storage/emulated/0/Android/data/";
+                } else if (name.startsWith("files/")) {
+                    return "/storage/emulated/0/Android/data/com.garena.game.kgvn/";
+                } else if (name.startsWith("Resources/")) {
+                    return DATA_PATH + "/";
+                }
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        return DATA_PATH + "/";
     }
 
     // ─── Tính năng 3: Xóa Mod ────────────────────────────────────
