@@ -47,10 +47,12 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_HASH = "resources_hash";
 
     private TextView tvShizukuStatus;
-    private Button btnFixResources;
-    private Button btnInstallMod;
-    private Button btnRemoveMod;
+    private android.widget.LinearLayout btnFixResources;
+    private android.widget.LinearLayout btnInstallMod;
+    private android.widget.LinearLayout btnRemoveMod;
     private ProgressBar progressBar;
+    private TextView tvGameVersion;
+    private TextView tvResourcesStatus;
 
     // Progress dialog
     private AlertDialog progressDialog;
@@ -96,6 +98,8 @@ public class MainActivity extends AppCompatActivity {
         btnInstallMod = findViewById(R.id.btn_install_mod);
         btnRemoveMod = findViewById(R.id.btn_remove_mod);
         progressBar = findViewById(R.id.progress_bar);
+        tvGameVersion = findViewById(R.id.tv_game_version);
+        tvResourcesStatus = findViewById(R.id.tv_resources_status);
 
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
 
@@ -133,6 +137,13 @@ public class MainActivity extends AppCompatActivity {
         });
 
         checkShizukuAndInit();
+
+        // Công cụ tạo mod
+        findViewById(R.id.btn_tool_map).setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://mapdes.onrender.com"));
+            startActivity(intent);
+        });
     }
 
     // ─── Progress Dialog ─────────────────────────────────────────
@@ -340,10 +351,48 @@ public class MainActivity extends AppCompatActivity {
             JSONObject json = new JSONObject(sb.toString());
             resourcesUrl = json.getString("resources_url");
             resourcesHash = json.optString("resources_hash", "");
+            String gameVersion = json.optString("game_version", "N/A");
+
+            mainHandler.post(() -> {
+                if (tvGameVersion != null) tvGameVersion.setText(gameVersion);
+            });
         } catch (Exception e) {
             resourcesUrl = null;
             resourcesHash = null;
+            mainHandler.post(() -> {
+                if (tvGameVersion != null) tvGameVersion.setText("Không tải được");
+            });
         }
+        updateResourcesStatus();
+    }
+
+    private void updateResourcesStatus() {
+        executor.execute(() -> {
+            File backupZip = new File(getFilesDir(), "resources_backup.zip");
+            boolean hasBackup = backupZip.exists();
+            boolean isFixed = hasBackup && fileExists(RESOURCES_PATH);
+            boolean isOriginal = !hasBackup && fileExists(RESOURCES_PATH);
+
+            String status;
+            int color;
+            if (isFixed && hasBackup) {
+                status = "✅ Đã Fix";
+                color = 0xFF00CC66;
+            } else if (isOriginal) {
+                status = "⚠️ Chưa Fix";
+                color = 0xFFFFAA00;
+            } else {
+                status = "❓ Không xác định";
+                color = 0xFF888888;
+            }
+
+            mainHandler.post(() -> {
+                if (tvResourcesStatus != null) {
+                    tvResourcesStatus.setText(status);
+                    tvResourcesStatus.setTextColor(color);
+                }
+            });
+        });
     }
 
     // ─── Hash ────────────────────────────────────────────────────
@@ -434,6 +483,7 @@ public class MainActivity extends AppCompatActivity {
             dismissProgressDialog();
 
             if (copied) {
+                updateResourcesStatus();
                 showDialog("Thành công ✅", "Fix Resources thành công! Khởi động lại game để thấy thay đổi.");
             } else {
                 showDialog("Lỗi", "Copy Resources thất bại. Thử lại.");
@@ -554,6 +604,7 @@ public class MainActivity extends AppCompatActivity {
             dismissProgressDialog();
 
             if (restored) {
+                updateResourcesStatus();
                 showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!");
             } else {
                 showDialog("Lỗi", "Khôi phục Resources thất bại.");
@@ -662,11 +713,13 @@ public class MainActivity extends AppCompatActivity {
     private void updateShizukuStatus(boolean granted) {
         mainHandler.post(() -> {
             if (granted) {
-                tvShizukuStatus.setText("Shizuku: ✅ Sẵn sàng");
+                tvShizukuStatus.setText("●");
                 tvShizukuStatus.setTextColor(0xFF00CC66);
+                tvShizukuStatus.setTooltipText("Shizuku: Sẵn sàng");
             } else {
-                tvShizukuStatus.setText("Shizuku: ❌ Chưa kết nối");
+                tvShizukuStatus.setText("●");
                 tvShizukuStatus.setTextColor(0xFFE94560);
+                tvShizukuStatus.setTooltipText("Shizuku: Chưa kết nối");
             }
         });
     }
@@ -688,8 +741,11 @@ public class MainActivity extends AppCompatActivity {
     private void setButtonsEnabled(boolean enabled) {
         mainHandler.post(() -> {
             btnFixResources.setEnabled(enabled);
+            btnFixResources.setAlpha(enabled ? 1f : 0.5f);
             btnInstallMod.setEnabled(enabled);
+            btnInstallMod.setAlpha(enabled ? 1f : 0.5f);
             btnRemoveMod.setEnabled(enabled);
+            btnRemoveMod.setAlpha(enabled ? 1f : 0.5f);
         });
     }
 
