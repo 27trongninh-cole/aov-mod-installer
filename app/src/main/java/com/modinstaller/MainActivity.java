@@ -346,15 +346,26 @@ public class MainActivity extends AppCompatActivity {
         executor.execute(() -> {
             if (gameVersion.isEmpty()) return;
 
-            // Lấy version thực tế trong máy: tên thư mục con duy nhất trong Resources/
-            String actualVersion = runShellOutput(
-                "ls \"" + RESOURCES_PATH + "\" 2>/dev/null | head -1").trim();
+            String rawOutput = runShellOutput(
+                "ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
+
+            // Lọc bỏ các dòng debug của rish (vd: "On Android 14+...", "Attempting to remove...")
+            String actualVersion = "";
+            for (String l : rawOutput.split("\n")) {
+                String trimmed = l.trim();
+                if (trimmed.isEmpty()) continue;
+                if (trimmed.startsWith("On Android") || trimmed.startsWith("Attempting")
+                        || trimmed.contains("write permission")) continue;
+                actualVersion = trimmed;
+                break;
+            }
 
             boolean isMaintenance = !actualVersion.isEmpty()
                 && !actualVersion.equals(gameVersion)
                 && !actualVersion.contains("No such file");
 
-            mainHandler.post(() -> setMaintenanceUI(isMaintenance, actualVersion));
+            final String finalVersion = actualVersion;
+            mainHandler.post(() -> setMaintenanceUI(isMaintenance, finalVersion));
         });
     }
 
