@@ -433,13 +433,16 @@ public class MainActivity extends AppCompatActivity {
             String fixedPath = configPath + "/" + MARKER_FIXED;
 
             String moddedContent = runShellOutput("cat \"" + moddedPath + "\" 2>/dev/null");
-            boolean hasModded = moddedContent != null && !moddedContent.trim().isEmpty()
-                && !moddedContent.contains("No such file");
+            boolean hasModded = fileExists(moddedPath);
+            String moddedName = (moddedContent != null && !moddedContent.trim().isEmpty()
+                && !moddedContent.contains("No such file"))
+                ? moddedContent.trim()
+                : "(không rõ tên)";
 
             String status;
             int color;
             if (hasModded) {
-                status = "🎨 Đã mod: " + moddedContent.trim();
+                status = "🎨 Đã mod: " + moddedName;
                 color = 0xFFE94560;
             } else if (fileExists(fixedPath)) {
                 status = "✅ Đã Fix";
