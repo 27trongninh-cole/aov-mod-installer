@@ -406,6 +406,7 @@ public class MainActivity extends AppCompatActivity {
             });
 
             checkMaintenanceMode();
+            updateResourcesStatus();
         } catch (Exception e) {
             resourcesUrl = null;
             resourcesHash = null;
