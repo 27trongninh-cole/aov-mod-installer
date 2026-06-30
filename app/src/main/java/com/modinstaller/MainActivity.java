@@ -46,6 +46,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
     private static final String PREF_NAME = "mod_ninstaller";
     private static final String PREF_HASH = "resources_hash";
+    private static final String MARKER_FIXED = "4fei6x96e66696e697479";
+    private static final String MARKER_MODDED = "4e696e66696e697m4o7d9";
 
     private TextView tvShizukuStatus;
     private android.widget.LinearLayout btnFixResources;
@@ -63,6 +65,7 @@ public class MainActivity extends AppCompatActivity {
 
     private String resourcesUrl = null;
     private String resourcesHash = null;
+    private String gameVersion = "";
     private File rishFile = null;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -337,6 +340,38 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // ─── Maintenance Mode ───────────────────────────────────────
+
+    private void checkMaintenanceMode() {
+        executor.execute(() -> {
+            if (gameVersion.isEmpty()) return;
+
+            // Lấy version thực tế trong máy: tên thư mục con duy nhất trong Resources/
+            String actualVersion = runShellOutput(
+                "ls \"" + RESOURCES_PATH + "\" 2>/dev/null | head -1").trim();
+
+            boolean isMaintenance = !actualVersion.isEmpty()
+                && !actualVersion.equals(gameVersion)
+                && !actualVersion.contains("No such file");
+
+            mainHandler.post(() -> setMaintenanceUI(isMaintenance, actualVersion));
+        });
+    }
+
+    private void setMaintenanceUI(boolean maintenance, String actualVersion) {
+        setButtonsEnabled(!maintenance);
+        if (maintenance) {
+            if (tvResourcesStatus != null) {
+                tvResourcesStatus.setText("🚧 Bảo trì");
+                tvResourcesStatus.setTextColor(0xFFFFAA00);
+            }
+            showDialog("🚧 Đang bảo trì",
+                "Game đã cập nhật lên phiên bản " + actualVersion
+                + " nhưng Resources trên server vẫn đang ở bản " + gameVersion
+                + ".\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!");
+        }
+    }
+
     // ─── Config ──────────────────────────────────────────────────
 
     private void fetchConfig() {
@@ -352,11 +387,14 @@ public class MainActivity extends AppCompatActivity {
             JSONObject json = new JSONObject(sb.toString());
             resourcesUrl = json.getString("resources_url");
             resourcesHash = json.optString("resources_hash", "");
-            String gameVersion = json.optString("game_version", "N/A");
+            gameVersion = json.optString("game_version", "");
+            String gameVersionDisplay = gameVersion.isEmpty() ? "N/A" : gameVersion;
 
             mainHandler.post(() -> {
-                if (tvGameVersion != null) tvGameVersion.setText(gameVersion);
+                if (tvGameVersion != null) tvGameVersion.setText(gameVersionDisplay);
             });
+
+            checkMaintenanceMode();
         } catch (Exception e) {
             resourcesUrl = null;
             resourcesHash = null;
@@ -369,22 +407,35 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateResourcesStatus() {
         executor.execute(() -> {
-            File backupZip = new File(getFilesDir(), "resources_backup.zip");
-            boolean hasBackup = backupZip.exists();
-            boolean isFixed = hasBackup && fileExists(RESOURCES_PATH);
-            boolean isOriginal = !hasBackup && fileExists(RESOURCES_PATH);
+            if (gameVersion.isEmpty()) {
+                mainHandler.post(() -> {
+                    if (tvResourcesStatus != null) {
+                        tvResourcesStatus.setText("❓ Chưa rõ");
+                        tvResourcesStatus.setTextColor(0xFF888888);
+                    }
+                });
+                return;
+            }
+
+            String configPath = RESOURCES_PATH + "/" + gameVersion + "/Config";
+            String moddedPath = configPath + "/" + MARKER_MODDED;
+            String fixedPath = configPath + "/" + MARKER_FIXED;
+
+            String moddedContent = runShellOutput("cat \"" + moddedPath + "\" 2>/dev/null");
+            boolean hasModded = moddedContent != null && !moddedContent.trim().isEmpty()
+                && !moddedContent.contains("No such file");
 
             String status;
             int color;
-            if (isFixed && hasBackup) {
+            if (hasModded) {
+                status = "🎨 Đã mod: " + moddedContent.trim();
+                color = 0xFFE94560;
+            } else if (fileExists(fixedPath)) {
                 status = "✅ Đã Fix";
                 color = 0xFF00CC66;
-            } else if (isOriginal) {
+            } else {
                 status = "⚠️ Chưa Fix";
                 color = 0xFFFFAA00;
-            } else {
-                status = "❓ Không xác định";
-                color = 0xFF888888;
             }
 
             mainHandler.post(() -> {
@@ -480,6 +531,12 @@ public class MainActivity extends AppCompatActivity {
             updateProgressDialog("Dọn dẹp...", 90);
             tmpZip.delete();
 
+            // Tự tạo file marker "fixed"
+            if (copied) {
+                String configPath = RESOURCES_PATH + "/" + gameVersion + "/Config";
+                runShell("mkdir -p \"" + configPath + "\" && rm -f \"" + configPath + "/" + MARKER_MODDED + "\" && touch \"" + configPath + "/" + MARKER_FIXED + "\"");
+            }
+
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
 
@@ -529,6 +586,7 @@ public class MainActivity extends AppCompatActivity {
             dismissProgressDialog();
 
             if (success) {
+                updateResourcesStatus();
                 showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
             } else {
                 showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
@@ -600,6 +658,12 @@ public class MainActivity extends AppCompatActivity {
             tmpZip2.delete();
 
             runShell("rm -rf \"" + BACKUP_PATH + "\"");
+
+            // Tự tạo file marker "fixed" và xóa "modded" sau khi khôi phục
+            if (restored) {
+                String configPath = RESOURCES_PATH + "/" + gameVersion + "/Config";
+                runShell("mkdir -p \"" + configPath + "\" && rm -f \"" + configPath + "/" + MARKER_MODDED + "\" && touch \"" + configPath + "/" + MARKER_FIXED + "\"");
+            }
 
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
