@@ -366,6 +366,7 @@ public class MainActivity extends AppCompatActivity {
 
             final String finalVersion = actualVersion;
             mainHandler.post(() -> setMaintenanceUI(isMaintenance, finalVersion));
+            updateResourcesStatus();
         });
     }
 
@@ -406,7 +407,6 @@ public class MainActivity extends AppCompatActivity {
             });
 
             checkMaintenanceMode();
-            updateResourcesStatus();
         } catch (Exception e) {
             resourcesUrl = null;
             resourcesHash = null;
@@ -414,7 +414,6 @@ public class MainActivity extends AppCompatActivity {
                 if (tvGameVersion != null) tvGameVersion.setText("Không tải được");
             });
         }
-        updateResourcesStatus();
     }
 
     private void updateResourcesStatus() {
