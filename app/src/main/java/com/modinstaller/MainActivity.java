@@ -50,6 +50,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String MARKER_MODDED = "4e696e66696e697m4o7d9";
 
     private TextView tvShizukuStatus;
+    private TextView tvShizukuLabel;
     private android.widget.LinearLayout btnFixResources;
     private android.widget.LinearLayout btnInstallMod;
     private android.widget.LinearLayout btnRemoveMod;
@@ -98,6 +99,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         tvShizukuStatus = findViewById(R.id.tv_shizuku_status);
+        tvShizukuLabel = findViewById(R.id.tv_shizuku_label);
         btnFixResources = findViewById(R.id.btn_fix_resources);
         btnInstallMod = findViewById(R.id.btn_install_mod);
         btnRemoveMod = findViewById(R.id.btn_remove_mod);
@@ -794,11 +796,17 @@ public class MainActivity extends AppCompatActivity {
             if (granted) {
                 tvShizukuStatus.setText("●");
                 tvShizukuStatus.setTextColor(0xFF00CC66);
-                tvShizukuStatus.setTooltipText("Shizuku: Sẵn sàng");
+                if (tvShizukuLabel != null) {
+                    tvShizukuLabel.setText("Sẵn sàng");
+                    tvShizukuLabel.setTextColor(0xFF00CC66);
+                }
             } else {
                 tvShizukuStatus.setText("●");
                 tvShizukuStatus.setTextColor(0xFFE94560);
-                tvShizukuStatus.setTooltipText("Shizuku: Chưa kết nối");
+                if (tvShizukuLabel != null) {
+                    tvShizukuLabel.setText("Chưa kết nối");
+                    tvShizukuLabel.setTextColor(0xFFE94560);
+                }
             }
         });
     }
