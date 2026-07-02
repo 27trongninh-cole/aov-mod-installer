@@ -145,7 +145,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Fix Resources button -->
         <androidx.cardview.widget.CardView
             xmlns:app="http://schemas.android.com/apk/res-auto"
             android:layout_width="match_parent"
@@ -156,45 +155,65 @@
             android:layout_marginBottom="12dp">
 
             <LinearLayout
-                android:id="@+id/btn_fix_resources"
                 android:layout_width="match_parent"
                 android:layout_height="64dp"
                 android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="20dp"
-                android:paddingEnd="20dp"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true">
-
-                <TextView
-                    android:layout_width="36dp"
-                    android:layout_height="wrap_content"
-                    android:text="🔧"
-                    android:textSize="22sp"
-                    android:gravity="center"
-                    android:layout_marginEnd="12dp" />
+                android:gravity="center_vertical">
 
                 <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
+                    android:id="@+id/btn_fix_resources"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="36dp"
                         android:layout_height="wrap_content"
-                        android:text="Fix Resources"
-                        android:textColor="#ffffff"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
+                        android:text="🔧"
+                        android:textSize="22sp"
+                        android:gravity="center"
+                        android:layout_marginEnd="12dp" />
 
-                    <TextView
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Tải và cài Resources từ server"
-                        android:textColor="#ffcccc"
-                        android:textSize="11sp" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Fix Resources"
+                            android:textColor="#ffffff"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Tải và cài Resources từ server"
+                            android:textColor="#ffcccc"
+                            android:textSize="11sp" />
+                    </LinearLayout>
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/btn_info_fix"
+                    android:layout_width="48dp"
+                    android:layout_height="match_parent"
+                    android:text="ⓘ"
+                    android:textSize="18sp"
+                    android:textColor="#ffffff"
+                    android:gravity="center"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:alpha="0.7" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -209,45 +228,65 @@
             android:layout_marginBottom="12dp">
 
             <LinearLayout
-                android:id="@+id/btn_install_mod"
                 android:layout_width="match_parent"
                 android:layout_height="64dp"
                 android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="20dp"
-                android:paddingEnd="20dp"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true">
-
-                <TextView
-                    android:layout_width="36dp"
-                    android:layout_height="wrap_content"
-                    android:text="📦"
-                    android:textSize="22sp"
-                    android:gravity="center"
-                    android:layout_marginEnd="12dp" />
+                android:gravity="center_vertical">
 
                 <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
+                    android:id="@+id/btn_install_mod"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="36dp"
                         android:layout_height="wrap_content"
-                        android:text="Cài file Mod"
-                        android:textColor="#ffffff"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
+                        android:text="📦"
+                        android:textSize="22sp"
+                        android:gravity="center"
+                        android:layout_marginEnd="12dp" />
 
-                    <TextView
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Chọn file .zip mod để cài"
-                        android:textColor="#aaaacc"
-                        android:textSize="11sp" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Cài file Mod"
+                            android:textColor="#ffffff"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Chọn file .zip mod để cài"
+                            android:textColor="#aaaacc"
+                            android:textSize="11sp" />
+                    </LinearLayout>
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/btn_info_mod"
+                    android:layout_width="48dp"
+                    android:layout_height="match_parent"
+                    android:text="ⓘ"
+                    android:textSize="18sp"
+                    android:textColor="#ffffff"
+                    android:gravity="center"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:alpha="0.7" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -262,45 +301,65 @@
             android:layout_marginBottom="24dp">
 
             <LinearLayout
-                android:id="@+id/btn_remove_mod"
                 android:layout_width="match_parent"
                 android:layout_height="64dp"
                 android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="20dp"
-                android:paddingEnd="20dp"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true">
-
-                <TextView
-                    android:layout_width="36dp"
-                    android:layout_height="wrap_content"
-                    android:text="🗑️"
-                    android:textSize="22sp"
-                    android:gravity="center"
-                    android:layout_marginEnd="12dp" />
+                android:gravity="center_vertical">
 
                 <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
+                    android:id="@+id/btn_remove_mod"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="36dp"
                         android:layout_height="wrap_content"
-                        android:text="Xóa tất cả Mod"
-                        android:textColor="#ffffff"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
+                        android:text="🗑️"
+                        android:textSize="22sp"
+                        android:gravity="center"
+                        android:layout_marginEnd="12dp" />
 
-                    <TextView
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Khôi phục Resources gốc"
-                        android:textColor="#888888"
-                        android:textSize="11sp" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Xóa tất cả Mod"
+                            android:textColor="#ffffff"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Khôi phục Resources gốc"
+                            android:textColor="#888888"
+                            android:textSize="11sp" />
+                    </LinearLayout>
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/btn_info_remove"
+                    android:layout_width="48dp"
+                    android:layout_height="match_parent"
+                    android:text="ⓘ"
+                    android:textSize="18sp"
+                    android:textColor="#ffffff"
+                    android:gravity="center"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:alpha="0.7" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -361,7 +420,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="AOV Map Custom"
+                        android:text="Map Texture Tool"
                         android:textColor="#ffffff"
                         android:textSize="14sp"
                         android:textStyle="bold" />
@@ -369,7 +428,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Tự tạo Mod map theo ý thích"
+                        android:text="Thay thế texture bản đồ"
                         android:textColor="#666688"
                         android:textSize="11sp" />
                 </LinearLayout>
