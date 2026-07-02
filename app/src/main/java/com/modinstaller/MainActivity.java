@@ -1,8 +1,11 @@
 package com.modinstaller;
 
 import android.app.AlertDialog;
+import android.Manifest;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -40,6 +43,8 @@ import rikka.shizuku.Shizuku;
 public class MainActivity extends AppCompatActivity {
 
     private static final int SHIZUKU_PERMISSION_CODE = 100;
+    private static final int STORAGE_PERMISSION_CODE = 101;
+    private boolean isLegacyMode = false; // Android <= 10: dùng File API thường
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
     private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
@@ -76,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
             if (requestCode == SHIZUKU_PERMISSION_CODE) {
                 if (grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     updateShizukuStatus(true);
-                    executor.execute(this::initRish);
+                    executor.execute(this::initRishOrDirect);
                 } else {
                     updateShizukuStatus(false);
                     showToast("Shizuku từ chối quyền. Vui lòng thử lại.");
@@ -150,6 +155,34 @@ public class MainActivity extends AppCompatActivity {
                 android.net.Uri.parse("https://mapdes.onrender.com"));
             startActivity(intent);
         });
+
+        // Nút thông tin (!)
+        findViewById(R.id.btn_info_fix).setOnClickListener(v ->
+            showDialog("🔧 Fix Resources",
+                "Tải Resources mới nhất từ server của Ninfinity về máy.\n\n" +
+                "• Bắt buộc phải chạy trước khi cài Mod\n" +
+                "• File Resources sẽ được lưu cache, các lần sau không cần tải lại (trừ khi có cập nhật)\n" +
+                "• Thư mục Resources gốc của game sẽ được đổi tên thành Resources_ninfinity_backup để bảo toàn")
+        );
+
+        findViewById(R.id.btn_info_mod).setOnClickListener(v ->
+            showDialog("📦 Cài file Mod",
+                "Cài mod vào game từ file .zip.\n\n" +
+                "• Cần chạy Fix Resources trước\n" +
+                "• File .zip hỗ trợ 3 cấu trúc:\n" +
+                "  — Resources/...\n" +
+                "  — files/Resources/...\n" +
+                "  — com.garena.game.kgvn/files/Resources/...\n" +
+                "• Khởi động lại game sau khi cài để thấy thay đổi")
+        );
+
+        findViewById(R.id.btn_info_remove).setOnClickListener(v ->
+            showDialog("🗑️ Xóa tất cả Mod",
+                "Xóa toàn bộ mod và khôi phục Resources gốc.\n\n" +
+                "• Resources gốc được khôi phục từ cache — không cần tải lại từ server\n" +
+                "• Sau khi xóa mod, có thể cài mod mới ngay mà không cần Fix Resources lại\n" +
+                "• Khởi động lại game sau khi xóa để thấy thay đổi")
+        );
     }
 
     // ─── Progress Dialog ─────────────────────────────────────────
@@ -214,20 +247,60 @@ public class MainActivity extends AppCompatActivity {
     // ─── Shizuku ────────────────────────────────────────────────
 
     private void checkShizukuAndInit() {
-        if (!Shizuku.pingBinder()) {
-            updateShizukuStatus(false);
-            showToast("Shizuku chưa chạy. Hãy mở Shizuku và bấm Start.");
-            return;
-        }
-        if (Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            updateShizukuStatus(true);
-            executor.execute(this::initRish);
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+            // Android 10 trở xuống: dùng File API thường
+            isLegacyMode = true;
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    == PackageManager.PERMISSION_GRANTED) {
+                updateShizukuStatus(true);
+                executor.execute(this::initRishOrDirect);
+            } else {
+                requestPermissions(new String[]{
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                }, STORAGE_PERMISSION_CODE);
+            }
         } else {
-            Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE);
+            // Android 11+: cần Shizuku
+            isLegacyMode = false;
+            if (!Shizuku.pingBinder()) {
+                updateShizukuStatus(false);
+                showToast("Shizuku chưa chạy. Hãy mở Shizuku và bấm Start.");
+                return;
+            }
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                updateShizukuStatus(true);
+                executor.execute(this::initRishOrDirect);
+            } else {
+                Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE);
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == STORAGE_PERMISSION_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                updateShizukuStatus(true);
+                executor.execute(this::initRishOrDirect);
+            } else {
+                updateShizukuStatus(false);
+                showToast("Cần quyền truy cập storage để sử dụng app!");
+            }
+        }
+    }
+
+    private void initRishOrDirect() {
+        if (isLegacyMode) {
+            fetchConfig();
+        } else {
+            initRish();
         }
     }
 
     private boolean checkShizuku() {
+        if (isLegacyMode) return true; // Android <= 10 không cần Shizuku
         if (!Shizuku.pingBinder()) {
             mainHandler.post(() ->
                 new AlertDialog.Builder(this)
@@ -296,6 +369,17 @@ public class MainActivity extends AppCompatActivity {
     // ─── Shell via rish ──────────────────────────────────────────
 
     private String runShellOutput(String cmd) {
+        if (isLegacyMode) {
+            try {
+                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+                BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line).append("\n");
+                p.waitFor();
+                return sb.toString().trim();
+            } catch (Exception e) { return ""; }
+        }
         try {
             if (rishFile == null || !rishFile.exists()) initRish();
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
@@ -313,6 +397,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean runShell(String cmd) {
+        if (isLegacyMode) {
+            // Android <= 10: chạy shell thường không cần rish
+            try {
+                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+                new BufferedReader(new InputStreamReader(p.getInputStream()))
+                    .lines().forEach(l -> {});
+                return p.waitFor() == 0;
+            } catch (Exception e) { return false; }
+        }
         try {
             if (rishFile == null || !rishFile.exists()) initRish();
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
@@ -328,6 +421,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean fileExists(String path) {
+        if (isLegacyMode) {
+            return new File(path).exists();
+        }
         try {
             if (rishFile == null || !rishFile.exists()) initRish();
             ProcessBuilder pb = new ProcessBuilder(
@@ -793,18 +889,19 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateShizukuStatus(boolean granted) {
         mainHandler.post(() -> {
+            String label = isLegacyMode ? "Storage" : "Shizuku";
             if (granted) {
                 tvShizukuStatus.setText("●");
                 tvShizukuStatus.setTextColor(0xFF00CC66);
                 if (tvShizukuLabel != null) {
-                    tvShizukuLabel.setText("Sẵn sàng");
+                    tvShizukuLabel.setText(label + ": Sẵn sàng");
                     tvShizukuLabel.setTextColor(0xFF00CC66);
                 }
             } else {
                 tvShizukuStatus.setText("●");
                 tvShizukuStatus.setTextColor(0xFFE94560);
                 if (tvShizukuLabel != null) {
-                    tvShizukuLabel.setText("Chưa kết nối");
+                    tvShizukuLabel.setText(label + ": Chưa kết nối");
                     tvShizukuLabel.setTextColor(0xFFE94560);
                 }
             }
