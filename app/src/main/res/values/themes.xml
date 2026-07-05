@@ -1,5 +1,5 @@
 <resources>
-    <color name="icon_background">#FFFFFF</color>
+    <color name="icon_background">#1a1a2e</color>
     <style name="Theme.ModInstaller" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">#e94560</item>
         <item name="colorPrimaryVariant">#0f3460</item>
