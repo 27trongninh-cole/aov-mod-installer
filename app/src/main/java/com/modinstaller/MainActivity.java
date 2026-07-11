@@ -51,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
     private static final String PREF_NAME = "mod_ninstaller";
     private static final String PREF_HASH = "resources_hash";
+    private static final String PREF_GAME_VERSION = "game_version";
     private static final String MARKER_FIXED = "4fei6x96e66696e697479";
     private static final String MARKER_MODDED = "4e696e66696e697m4o7d9";
 
@@ -148,6 +149,14 @@ public class MainActivity extends AppCompatActivity {
         });
 
         checkShizukuAndInit();
+
+        // Load gameVersion đã lưu → dùng ngay để kiểm tra trạng thái trước khi fetch config
+        gameVersion = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+            .getString(PREF_GAME_VERSION, "");
+        if (!gameVersion.isEmpty()) {
+            if (tvGameVersion != null) tvGameVersion.setText(gameVersion);
+            executor.execute(this::updateResourcesStatus);
+        }
 
         // Công cụ tạo mod
         findViewById(R.id.btn_tool_map).setOnClickListener(v -> {
@@ -499,6 +508,12 @@ public class MainActivity extends AppCompatActivity {
             resourcesHash = json.optString("resources_hash", "");
             gameVersion = json.optString("game_version", "");
             String gameVersionDisplay = gameVersion.isEmpty() ? "N/A" : gameVersion;
+
+            // Lưu gameVersion để dùng ngay lần sau khi mở app
+            if (!gameVersion.isEmpty()) {
+                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                    .putString(PREF_GAME_VERSION, gameVersion).apply();
+            }
 
             mainHandler.post(() -> {
                 if (tvGameVersion != null) tvGameVersion.setText(gameVersionDisplay);
