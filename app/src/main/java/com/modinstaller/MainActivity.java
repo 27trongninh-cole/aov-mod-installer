@@ -456,20 +456,20 @@ public class MainActivity extends AppCompatActivity {
             String rawOutput = runShellOutput(
                 "ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
 
-            // Lọc bỏ các dòng debug của rish (vd: "On Android 14+...", "Attempting to remove...")
+            // Lọc bỏ các dòng debug/lỗi, chỉ lấy dòng trông giống version (chứa dấu chấm)
             String actualVersion = "";
             for (String l : rawOutput.split("\n")) {
                 String trimmed = l.trim();
                 if (trimmed.isEmpty()) continue;
-                if (trimmed.startsWith("On Android") || trimmed.startsWith("Attempting")
-                        || trimmed.contains("write permission")) continue;
-                actualVersion = trimmed;
-                break;
+                // Dòng version phải có dạng số.số.số (vd: 1.63.1)
+                if (trimmed.matches("\\d+\\.\\d+.*")) {
+                    actualVersion = trimmed;
+                    break;
+                }
             }
 
             boolean isMaintenance = !actualVersion.isEmpty()
-                && !actualVersion.equals(gameVersion)
-                && !actualVersion.contains("No such file");
+                && !actualVersion.equals(gameVersion);
 
             final String finalVersion = actualVersion;
             mainHandler.post(() -> setMaintenanceUI(isMaintenance, finalVersion));
