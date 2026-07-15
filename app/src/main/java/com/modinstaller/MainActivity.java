@@ -196,40 +196,104 @@ public class MainActivity extends AppCompatActivity {
 
     // ─── Progress Dialog ─────────────────────────────────────────
 
+    private android.widget.ImageView ivProgressSpinner;
+    private android.animation.ObjectAnimator spinAnimator;
+
     private void showProgressDialog(String title) {
         mainHandler.post(() -> {
+            // Container card bo tròn
             android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
             layout.setOrientation(android.widget.LinearLayout.VERTICAL);
-            layout.setPadding(60, 40, 60, 20);
+            layout.setPadding(56, 48, 56, 40);
+            layout.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+
+            // Nền bo tròn tối đồng bộ app
+            android.graphics.drawable.GradientDrawable bgShape = new android.graphics.drawable.GradientDrawable();
+            bgShape.setColor(0xFF16213e);
+            bgShape.setCornerRadius(28f);
+            bgShape.setStroke(2, 0xFF0f3460);
+            layout.setBackground(bgShape);
+
+            // Icon xoay (dùng ký tự ⚙ hoặc wrench)
+            ivProgressSpinner = new android.widget.ImageView(this);
+            android.widget.LinearLayout.LayoutParams spinnerLp =
+                new android.widget.LinearLayout.LayoutParams(72, 72);
+            spinnerLp.bottomMargin = 20;
+            ivProgressSpinner.setLayoutParams(spinnerLp);
+            ivProgressSpinner.setImageResource(R.mipmap.ic_launcher_foreground);
+            ivProgressSpinner.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+            layout.addView(ivProgressSpinner);
+
+            // Bắt đầu animation xoay liên tục
+            spinAnimator = android.animation.ObjectAnimator.ofFloat(ivProgressSpinner, "rotation", 0f, 360f);
+            spinAnimator.setDuration(1400);
+            spinAnimator.setRepeatCount(android.animation.ObjectAnimator.INFINITE);
+            spinAnimator.setInterpolator(new android.view.animation.LinearInterpolator());
+            spinAnimator.start();
 
             tvProgressMsg = new TextView(this);
             tvProgressMsg.setText(title);
             tvProgressMsg.setTextSize(14);
             tvProgressMsg.setTextColor(0xFFFFFFFF);
-            tvProgressMsg.setPadding(0, 0, 0, 16);
+            tvProgressMsg.setGravity(android.view.Gravity.CENTER);
+            tvProgressMsg.setPadding(0, 0, 0, 18);
             layout.addView(tvProgressMsg);
+
+            // Progress bar bo tròn với track nền tối
+            android.widget.FrameLayout progressContainer = new android.widget.FrameLayout(this);
+            android.widget.LinearLayout.LayoutParams containerLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 20);
+            progressContainer.setLayoutParams(containerLp);
+
+            android.graphics.drawable.GradientDrawable track = new android.graphics.drawable.GradientDrawable();
+            track.setColor(0xFF0f3460);
+            track.setCornerRadius(10f);
+            progressContainer.setBackground(track);
 
             progressBarDialog = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             progressBarDialog.setMax(100);
             progressBarDialog.setProgress(0);
             progressBarDialog.setIndeterminate(false);
-            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 24);
-            progressBarDialog.setLayoutParams(lp);
-            layout.addView(progressBarDialog);
+
+            // Gradient đỏ cho progress bar
+            android.graphics.drawable.GradientDrawable progressShape = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xFFe94560, 0xFFff6b8a});
+            progressShape.setCornerRadius(10f);
+            android.graphics.drawable.ClipDrawable clipDrawable = new android.graphics.drawable.ClipDrawable(
+                progressShape, android.view.Gravity.START, android.graphics.drawable.ClipDrawable.HORIZONTAL);
+
+            android.graphics.drawable.LayerDrawable layerDrawable = new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[]{
+                    new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT),
+                    clipDrawable
+                });
+            layerDrawable.setId(0, android.R.id.progress);
+            progressBarDialog.setProgressDrawable(layerDrawable);
+
+            progressContainer.addView(progressBarDialog, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+            layout.addView(progressContainer);
 
             tvProgressPercent = new TextView(this);
             tvProgressPercent.setText("0%");
             tvProgressPercent.setTextSize(12);
-            tvProgressPercent.setTextColor(0xFF888888);
+            tvProgressPercent.setTextColor(0xFF888899);
             tvProgressPercent.setGravity(android.view.Gravity.END);
-            tvProgressPercent.setPadding(0, 8, 0, 0);
+            tvProgressPercent.setPadding(0, 10, 0, 0);
             layout.addView(tvProgressPercent);
 
             progressDialog = new AlertDialog.Builder(this)
                 .setView(layout)
                 .setCancelable(false)
                 .create();
+
+            if (progressDialog.getWindow() != null) {
+                progressDialog.getWindow().setBackgroundDrawable(
+                    new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+            }
+
             progressDialog.show();
         });
     }
@@ -246,6 +310,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void dismissProgressDialog() {
         mainHandler.post(() -> {
+            if (spinAnimator != null) {
+                spinAnimator.cancel();
+                spinAnimator = null;
+            }
             if (progressDialog != null && progressDialog.isShowing()) {
                 progressDialog.dismiss();
                 progressDialog = null;
