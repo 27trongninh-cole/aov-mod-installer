@@ -30,6 +30,44 @@ public class WebViewActivity extends AppCompatActivity {
     private WebView webView;
     private ProgressBar progressBar;
 
+    // JS được inject ngay khi trang load xong, chặn mọi <a download> hoặc
+    // window.open trên blob: URL để đọc dữ liệu NGAY LÚC CÒN TỒN TẠI,
+    // tránh trường hợp blob bị revoke trước khi Android kịp fetch lại.
+    private static final String INTERCEPT_JS =
+        "(function() {" +
+        "  if (window.__androidBlobHooked) return;" +
+        "  window.__androidBlobHooked = true;" +
+        "  function handleBlobUrl(blobUrl, fileName) {" +
+        "    fetch(blobUrl).then(function(res) { return res.blob(); })" +
+        "      .then(function(blob) {" +
+        "        var reader = new FileReader();" +
+        "        reader.onloadend = function() {" +
+        "          var base64 = reader.result.split(',')[1];" +
+        "          AndroidBlobDownload.saveBlobFile(base64, fileName || ('mod_' + Date.now() + '.zip'));" +
+        "        };" +
+        "        reader.readAsDataURL(blob);" +
+        "      })" +
+        "      .catch(function(err) { AndroidBlobDownload.onError(err.toString()); });" +
+        "  }" +
+        "  document.addEventListener('click', function(e) {" +
+        "    var el = e.target;" +
+        "    while (el && el.tagName !== 'A') el = el.parentElement;" +
+        "    if (el && el.href && el.href.indexOf('blob:') === 0) {" +
+        "      e.preventDefault();" +
+        "      var name = el.download || null;" +
+        "      handleBlobUrl(el.href, name);" +
+        "    }" +
+        "  }, true);" +
+        "  var originalOpen = window.open;" +
+        "  window.open = function(url, name, specs) {" +
+        "    if (url && url.indexOf('blob:') === 0) {" +
+        "      handleBlobUrl(url, null);" +
+        "      return null;" +
+        "    }" +
+        "    return originalOpen.call(window, url, name, specs);" +
+        "  };" +
+        "})();";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -61,25 +99,24 @@ public class WebViewActivity extends AppCompatActivity {
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
 
-        // Interface cho JS gọi ngược vào Java để lưu file blob
         webView.addJavascriptInterface(new BlobDownloadInterface(), "AndroidBlobDownload");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
+            public void onPageFinished(WebView view, String pageUrl) {
+                super.onPageFinished(view, pageUrl);
                 if (progressBar != null) progressBar.setVisibility(View.GONE);
+                // Inject ngay khi trang load xong để hook sẵn, tránh miss blob download
+                view.evaluateJavascript(INTERCEPT_JS, null);
             }
         });
 
-        // Bắt sự kiện download từ trang web
+        // Fallback: vẫn giữ DownloadListener cho các link tải HTTP thường
         webView.setDownloadListener((downloadUrl, userAgent, contentDisposition, mimeType, contentLength) -> {
-            if (downloadUrl.startsWith("blob:")) {
-                // Blob URL: không tải trực tiếp được, cần JS đọc rồi convert base64
-                downloadBlobViaJs(downloadUrl);
-            } else {
+            if (!downloadUrl.startsWith("blob:")) {
                 downloadNormalFile(downloadUrl, userAgent, contentDisposition, mimeType);
             }
+            // blob: URL đã được INTERCEPT_JS xử lý trước khi tới đây, bỏ qua
         });
 
         if (url != null) {
@@ -87,7 +124,6 @@ public class WebViewActivity extends AppCompatActivity {
         }
     }
 
-    // Tải file HTTP bình thường qua DownloadManager
     private void downloadNormalFile(String downloadUrl, String userAgent, String contentDisposition, String mimeType) {
         try {
             String fileName = android.webkit.URLUtil.guessFileName(downloadUrl, contentDisposition, mimeType);
@@ -111,31 +147,6 @@ public class WebViewActivity extends AppCompatActivity {
         }
     }
 
-    // Tải file dạng blob: qua JS injection, đọc bằng FileReader rồi gửi base64 về Java
-    private void downloadBlobViaJs(String blobUrl) {
-        String js =
-            "(function() {" +
-            "  fetch('" + blobUrl + "')" +
-            "    .then(res => res.blob())" +
-            "    .then(blob => {" +
-            "      var reader = new FileReader();" +
-            "      reader.onloadend = function() {" +
-            "        var base64 = reader.result.split(',')[1];" +
-            "        var fileName = 'mod_' + Date.now() + '.zip';" +
-            "        AndroidBlobDownload.saveBlobFile(base64, fileName);" +
-            "      };" +
-            "      reader.readAsDataURL(blob);" +
-            "    })" +
-            "    .catch(err => AndroidBlobDownload.onError(err.toString()));" +
-            "})();";
-
-        runOnUiThread(() -> {
-            Toast.makeText(this, "Đang xử lý file tải về...", Toast.LENGTH_SHORT).show();
-            webView.evaluateJavascript(js, null);
-        });
-    }
-
-    // Interface nhận dữ liệu base64 từ JS và lưu ra file thật
     private class BlobDownloadInterface {
         @JavascriptInterface
         public void saveBlobFile(String base64Data, String suggestedName) {
