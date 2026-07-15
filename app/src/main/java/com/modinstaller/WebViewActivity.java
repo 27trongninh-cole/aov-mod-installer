@@ -5,7 +5,9 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.util.Base64;
 import android.view.View;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -15,6 +17,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+
+import java.io.File;
+import java.io.FileOutputStream;
 
 public class WebViewActivity extends AppCompatActivity {
 
@@ -56,6 +61,9 @@ public class WebViewActivity extends AppCompatActivity {
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
 
+        // Interface cho JS gọi ngược vào Java để lưu file blob
+        webView.addJavascriptInterface(new BlobDownloadInterface(), "AndroidBlobDownload");
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
@@ -64,34 +72,100 @@ public class WebViewActivity extends AppCompatActivity {
             }
         });
 
-        // Bắt sự kiện download từ trang web, lưu vào Download/ModNinstaller/
+        // Bắt sự kiện download từ trang web
         webView.setDownloadListener((downloadUrl, userAgent, contentDisposition, mimeType, contentLength) -> {
-            try {
-                String fileName = android.webkit.URLUtil.guessFileName(downloadUrl, contentDisposition, mimeType);
-
-                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(downloadUrl));
-                request.setMimeType(mimeType);
-                request.addRequestHeader("User-Agent", userAgent);
-                request.setDescription("Đang tải mod từ Mod Ninstaller");
-                request.setTitle(fileName);
-                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-
-                // Lưu vào Download/ModNinstaller/
-                request.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS, DOWNLOAD_SUBFOLDER + "/" + fileName);
-
-                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-                if (dm != null) {
-                    dm.enqueue(request);
-                    Toast.makeText(this, "Đang tải: " + fileName, Toast.LENGTH_SHORT).show();
-                }
-            } catch (Exception e) {
-                Toast.makeText(this, "Lỗi tải file: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (downloadUrl.startsWith("blob:")) {
+                // Blob URL: không tải trực tiếp được, cần JS đọc rồi convert base64
+                downloadBlobViaJs(downloadUrl);
+            } else {
+                downloadNormalFile(downloadUrl, userAgent, contentDisposition, mimeType);
             }
         });
 
         if (url != null) {
             webView.loadUrl(url);
+        }
+    }
+
+    // Tải file HTTP bình thường qua DownloadManager
+    private void downloadNormalFile(String downloadUrl, String userAgent, String contentDisposition, String mimeType) {
+        try {
+            String fileName = android.webkit.URLUtil.guessFileName(downloadUrl, contentDisposition, mimeType);
+
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(downloadUrl));
+            request.setMimeType(mimeType);
+            request.addRequestHeader("User-Agent", userAgent);
+            request.setDescription("Đang tải mod từ Mod Ninstaller");
+            request.setTitle(fileName);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(
+                Environment.DIRECTORY_DOWNLOADS, DOWNLOAD_SUBFOLDER + "/" + fileName);
+
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (dm != null) {
+                dm.enqueue(request);
+                Toast.makeText(this, "Đang tải: " + fileName, Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "Lỗi tải file: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    // Tải file dạng blob: qua JS injection, đọc bằng FileReader rồi gửi base64 về Java
+    private void downloadBlobViaJs(String blobUrl) {
+        String js =
+            "(function() {" +
+            "  fetch('" + blobUrl + "')" +
+            "    .then(res => res.blob())" +
+            "    .then(blob => {" +
+            "      var reader = new FileReader();" +
+            "      reader.onloadend = function() {" +
+            "        var base64 = reader.result.split(',')[1];" +
+            "        var fileName = 'mod_' + Date.now() + '.zip';" +
+            "        AndroidBlobDownload.saveBlobFile(base64, fileName);" +
+            "      };" +
+            "      reader.readAsDataURL(blob);" +
+            "    })" +
+            "    .catch(err => AndroidBlobDownload.onError(err.toString()));" +
+            "})();";
+
+        runOnUiThread(() -> {
+            Toast.makeText(this, "Đang xử lý file tải về...", Toast.LENGTH_SHORT).show();
+            webView.evaluateJavascript(js, null);
+        });
+    }
+
+    // Interface nhận dữ liệu base64 từ JS và lưu ra file thật
+    private class BlobDownloadInterface {
+        @JavascriptInterface
+        public void saveBlobFile(String base64Data, String suggestedName) {
+            try {
+                byte[] fileBytes = Base64.decode(base64Data, Base64.DEFAULT);
+
+                File downloadDir = new File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    DOWNLOAD_SUBFOLDER);
+                if (!downloadDir.exists()) downloadDir.mkdirs();
+
+                File outFile = new File(downloadDir, suggestedName);
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    fos.write(fileBytes);
+                }
+
+                runOnUiThread(() -> Toast.makeText(WebViewActivity.this,
+                    "Đã lưu: Download/" + DOWNLOAD_SUBFOLDER + "/" + suggestedName,
+                    Toast.LENGTH_LONG).show());
+
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(WebViewActivity.this,
+                    "Lỗi lưu file: " + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }
+
+        @JavascriptInterface
+        public void onError(String error) {
+            runOnUiThread(() -> Toast.makeText(WebViewActivity.this,
+                "Lỗi tải file: " + error, Toast.LENGTH_LONG).show());
         }
     }
 
