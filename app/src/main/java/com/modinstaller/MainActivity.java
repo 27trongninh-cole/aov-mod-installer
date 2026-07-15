@@ -8,6 +8,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
@@ -90,12 +91,15 @@ public class MainActivity extends AppCompatActivity {
             }
         };
 
-    private final ActivityResultLauncher<String[]> filePickerLauncher =
-        registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
-            if (uri != null) {
-                setButtonsEnabled(false);
-                showProgress(true);
-                executor.execute(() -> installMod(uri));
+    private final ActivityResultLauncher<Intent> filePickerLauncher =
+        registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(), result -> {
+            if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                Uri uri = result.getData().getData();
+                if (uri != null) {
+                    setButtonsEnabled(false);
+                    showProgress(true);
+                    executor.execute(() -> installMod(uri));
+                }
             }
         });
 
@@ -133,7 +137,7 @@ public class MainActivity extends AppCompatActivity {
 
         btnInstallMod.setOnClickListener(v -> {
             if (!checkShizuku()) return;
-            filePickerLauncher.launch(new String[]{"application/zip", "application/x-zip-compressed"});
+            filePickerLauncher.launch(createModFilePickerIntent());
         });
 
         btnRemoveMod.setOnClickListener(v -> {
@@ -164,8 +168,9 @@ public class MainActivity extends AppCompatActivity {
 
         // Công cụ tạo mod
         findViewById(R.id.btn_tool_map).setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_VIEW,
-                android.net.Uri.parse("https://mapdes.onrender.com"));
+            Intent intent = new Intent(this, WebViewActivity.class);
+            intent.putExtra(WebViewActivity.EXTRA_URL, "https://mapdes.onrender.com");
+            intent.putExtra(WebViewActivity.EXTRA_TITLE, "Map Texture Tool");
             startActivity(intent);
         });
 
@@ -429,6 +434,32 @@ public class MainActivity extends AppCompatActivity {
         } else {
             initRish();
         }
+    }
+
+    // Tạo Intent mở file picker, gợi ý mở tại Download/ModNinstaller/ (nơi WebView tải mod về)
+    private Intent createModFilePickerIntent() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+            "application/zip", "application/x-zip-compressed"});
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                // Xây dựng URI trỏ tới Download/ModNinstaller/ trên storage chính
+                java.io.File downloadDir = new java.io.File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    WebViewActivity.DOWNLOAD_SUBFOLDER);
+
+                String docId = "primary:Download/" + WebViewActivity.DOWNLOAD_SUBFOLDER;
+                Uri initialUri = android.provider.DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents", docId);
+                intent.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, initialUri);
+            } catch (Exception e) {
+                // Nếu lỗi, bỏ qua — file picker vẫn mở bình thường ở vị trí mặc định
+            }
+        }
+        return intent;
     }
 
     private boolean checkShizuku() {
