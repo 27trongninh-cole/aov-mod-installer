@@ -117,7 +117,7 @@ public class MainActivity extends AppCompatActivity {
 
         btnFixResources.setOnClickListener(v -> {
             if (!checkShizuku()) return;
-            new AlertDialog.Builder(this)
+            AlertDialog d1 = new AlertDialog.Builder(this)
                 .setTitle("Fix Resources")
                 .setMessage("App sẽ thay thế thư mục Resources. Tiếp tục?")
                 .setPositiveButton("Tiếp tục", (d, w) -> {
@@ -126,7 +126,9 @@ public class MainActivity extends AppCompatActivity {
                     executor.execute(this::fixResources);
                 })
                 .setNegativeButton("Hủy", null)
-                .show();
+                .create();
+            styleDialog(d1);
+            d1.show();
         });
 
         btnInstallMod.setOnClickListener(v -> {
@@ -136,7 +138,7 @@ public class MainActivity extends AppCompatActivity {
 
         btnRemoveMod.setOnClickListener(v -> {
             if (!checkShizuku()) return;
-            new AlertDialog.Builder(this)
+            AlertDialog d2 = new AlertDialog.Builder(this)
                 .setTitle("Xóa tất cả Mod")
                 .setMessage("App sẽ khôi phục Resources gốc. Tiếp tục?")
                 .setPositiveButton("Tiếp tục", (d, w) -> {
@@ -145,17 +147,19 @@ public class MainActivity extends AppCompatActivity {
                     executor.execute(this::removeMod);
                 })
                 .setNegativeButton("Hủy", null)
-                .show();
+                .create();
+            styleDialog(d2);
+            d2.show();
         });
 
         checkShizukuAndInit();
 
-        // Load gameVersion đã lưu → dùng ngay để kiểm tra trạng thái trước khi fetch config
+        // Load gameVersion đã lưu → hiện tạm ngay (không query trạng thái để tránh race
+        // với checkMaintenanceMode/updateResourcesStatus chạy sau khi fetch config xong)
         gameVersion = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
             .getString(PREF_GAME_VERSION, "");
-        if (!gameVersion.isEmpty()) {
-            if (tvGameVersion != null) tvGameVersion.setText(gameVersion);
-            executor.execute(this::updateResourcesStatus);
+        if (!gameVersion.isEmpty() && tvGameVersion != null) {
+            tvGameVersion.setText(gameVersion);
         }
 
         // Công cụ tạo mod
@@ -199,6 +203,50 @@ public class MainActivity extends AppCompatActivity {
     private android.widget.ImageView ivProgressSpinner;
     private android.animation.ObjectAnimator spinAnimator;
 
+    private android.graphics.drawable.Drawable createGearDrawable() {
+        int size = 96;
+        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+            size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
+
+        android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(0xFFe94560);
+        paint.setStyle(android.graphics.Paint.Style.FILL);
+
+        float cx = size / 2f, cy = size / 2f;
+        float outerR = size * 0.42f;
+        float innerR = size * 0.28f;
+        float toothLen = size * 0.12f;
+
+        // Vẽ 8 răng bánh răng
+        int teeth = 8;
+        for (int i = 0; i < teeth; i++) {
+            double angle = Math.toRadians(360.0 / teeth * i);
+            float x1 = cx + (float) Math.cos(angle) * outerR;
+            float y1 = cy + (float) Math.sin(angle) * outerR;
+            float x2 = cx + (float) Math.cos(angle) * (outerR + toothLen);
+            float y2 = cy + (float) Math.sin(angle) * (outerR + toothLen);
+            canvas.drawLine(x1, y1, x2, y2, strokePaint(paint, size * 0.14f));
+        }
+
+        // Vòng ngoài
+        canvas.drawCircle(cx, cy, outerR, paint);
+        // Lỗ giữa (trong suốt)
+        android.graphics.Paint holePaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        holePaint.setColor(0xFF16213e);
+        holePaint.setStyle(android.graphics.Paint.Style.FILL);
+        canvas.drawCircle(cx, cy, innerR, holePaint);
+
+        return new android.graphics.drawable.BitmapDrawable(getResources(), bmp);
+    }
+
+    private android.graphics.Paint strokePaint(android.graphics.Paint base, float width) {
+        android.graphics.Paint p = new android.graphics.Paint(base);
+        p.setStrokeWidth(width);
+        p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+        return p;
+    }
+
     private void showProgressDialog(String title) {
         mainHandler.post(() -> {
             // Container card bo tròn
@@ -217,10 +265,10 @@ public class MainActivity extends AppCompatActivity {
             // Icon xoay (dùng ký tự ⚙ hoặc wrench)
             ivProgressSpinner = new android.widget.ImageView(this);
             android.widget.LinearLayout.LayoutParams spinnerLp =
-                new android.widget.LinearLayout.LayoutParams(72, 72);
+                new android.widget.LinearLayout.LayoutParams(64, 64);
             spinnerLp.bottomMargin = 20;
             ivProgressSpinner.setLayoutParams(spinnerLp);
-            ivProgressSpinner.setImageResource(R.mipmap.ic_launcher_foreground);
+            ivProgressSpinner.setImageDrawable(createGearDrawable());
             ivProgressSpinner.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
             layout.addView(ivProgressSpinner);
 
@@ -268,7 +316,7 @@ public class MainActivity extends AppCompatActivity {
                     new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT),
                     clipDrawable
                 });
-            layerDrawable.setId(0, android.R.id.progress);
+            layerDrawable.setId(1, android.R.id.progress); // layer 1 = clipDrawable (fix: trước đây trỏ nhầm layer 0)
             progressBarDialog.setProgressDrawable(layerDrawable);
 
             progressContainer.addView(progressBarDialog, new android.widget.FrameLayout.LayoutParams(
@@ -302,7 +350,14 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.post(() -> {
             if (progressDialog != null && progressDialog.isShowing()) {
                 if (tvProgressMsg != null) tvProgressMsg.setText(msg);
-                if (progressBarDialog != null) progressBarDialog.setProgress(percent);
+                if (progressBarDialog != null) {
+                    // Animate mượt từ giá trị hiện tại đến percent mới
+                    android.animation.ObjectAnimator anim = android.animation.ObjectAnimator.ofInt(
+                        progressBarDialog, "progress", progressBarDialog.getProgress(), percent);
+                    anim.setDuration(300);
+                    anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+                    anim.start();
+                }
                 if (tvProgressPercent != null) tvProgressPercent.setText(percent + "%");
             }
         });
@@ -379,11 +434,11 @@ public class MainActivity extends AppCompatActivity {
     private boolean checkShizuku() {
         if (isLegacyMode) return true; // Android <= 10 không cần Shizuku
         if (!Shizuku.pingBinder()) {
-            mainHandler.post(() ->
-                new AlertDialog.Builder(this)
+            mainHandler.post(() -> {
+                AlertDialog d = new AlertDialog.Builder(this)
                     .setTitle("Shizuku chưa chạy")
                     .setMessage("Cần mở Shizuku và bấm Start trước khi sử dụng tính năng này.")
-                    .setPositiveButton("Mở Shizuku", (d, w) -> {
+                    .setPositiveButton("Mở Shizuku", (dlg, w) -> {
                         try {
                             startActivity(getPackageManager()
                                 .getLaunchIntentForPackage("moe.shizuku.privileged.api"));
@@ -392,20 +447,24 @@ public class MainActivity extends AppCompatActivity {
                         }
                     })
                     .setNegativeButton("Hủy", null)
-                    .show()
-            );
+                    .create();
+                styleDialog(d);
+                d.show();
+            });
             return false;
         }
         if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            mainHandler.post(() ->
-                new AlertDialog.Builder(this)
+            mainHandler.post(() -> {
+                AlertDialog d = new AlertDialog.Builder(this)
                     .setTitle("Chưa có quyền Shizuku")
                     .setMessage("App cần được Shizuku cấp quyền để hoạt động.")
-                    .setPositiveButton("Cấp quyền", (d, w) ->
+                    .setPositiveButton("Cấp quyền", (dlg, w) ->
                         Shizuku.requestPermission(SHIZUKU_PERMISSION_CODE))
                     .setNegativeButton("Hủy", null)
-                    .show()
-            );
+                    .create();
+                styleDialog(d);
+                d.show();
+            });
             return false;
         }
         return true;
@@ -541,7 +600,7 @@ public class MainActivity extends AppCompatActivity {
 
             final String finalVersion = actualVersion;
             mainHandler.post(() -> setMaintenanceUI(isMaintenance, finalVersion));
-            updateResourcesStatus();
+            updateResourcesStatus(); // gọi duy nhất 1 lần ở đây sau khi version đã ổn định
         });
     }
 
@@ -599,7 +658,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateResourcesStatus() {
         executor.execute(() -> {
-            if (gameVersion.isEmpty()) {
+            String currentGameVersion = gameVersion; // snapshot để tránh race condition
+            if (currentGameVersion.isEmpty()) {
                 mainHandler.post(() -> {
                     if (tvResourcesStatus != null) {
                         tvResourcesStatus.setText("❓ Chưa rõ");
@@ -609,23 +669,31 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            String configPath = RESOURCES_PATH + "/" + gameVersion + "/Config";
+            String configPath = RESOURCES_PATH + "/" + currentGameVersion + "/Config";
             String moddedPath = configPath + "/" + MARKER_MODDED;
             String fixedPath = configPath + "/" + MARKER_FIXED;
 
-            String moddedContent = runShellOutput("cat \"" + moddedPath + "\" 2>/dev/null");
-            boolean hasModded = fileExists(moddedPath);
-            String moddedName = (moddedContent != null && !moddedContent.trim().isEmpty()
-                && !moddedContent.contains("No such file"))
-                ? moddedContent.trim()
-                : "(không rõ tên)";
+            // Gộp thành 1 lệnh duy nhất: check modded trước, fallback fixed, tránh gọi rish nhiều lần
+            String combinedCmd =
+                "if [ -e \"" + moddedPath + "\" ]; then " +
+                "  echo MODDED; cat \"" + moddedPath + "\" 2>/dev/null; " +
+                "elif [ -e \"" + fixedPath + "\" ]; then " +
+                "  echo FIXED; " +
+                "else " +
+                "  echo NONE; " +
+                "fi";
+
+            String output = runShellOutput(combinedCmd);
+            String[] lines = output.split("\n", 2);
+            String state = lines.length > 0 ? lines[0].trim() : "NONE";
+            String moddedName = lines.length > 1 ? lines[1].trim() : "";
 
             String status;
             int color;
-            if (hasModded) {
-                status = "🎨 Đã mod: " + moddedName;
+            if ("MODDED".equals(state)) {
+                status = "🎨 Đã mod: " + (moddedName.isEmpty() ? "(không rõ tên)" : moddedName);
                 color = 0xFFE94560;
-            } else if (fileExists(fixedPath)) {
+            } else if ("FIXED".equals(state)) {
                 status = "✅ Đã Fix";
                 color = 0xFF00CC66;
             } else {
@@ -996,13 +1064,40 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showDialog(String title, String msg) {
-        mainHandler.post(() ->
-            new AlertDialog.Builder(this)
+        mainHandler.post(() -> {
+            AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setMessage(msg)
                 .setPositiveButton("OK", null)
-                .show()
-        );
+                .create();
+            styleDialog(dialog);
+            dialog.show();
+        });
+    }
+
+    // Style AlertDialog đồng bộ theme tối của app (nền #16213e, viền #0f3460, chữ trắng, nút đỏ)
+    private void styleDialog(AlertDialog dialog) {
+        if (dialog.getWindow() != null) {
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+            bg.setColor(0xFF16213e);
+            bg.setCornerRadius(24f);
+            bg.setStroke(2, 0xFF0f3460);
+            dialog.getWindow().setBackgroundDrawable(bg);
+        }
+        dialog.setOnShowListener(d -> {
+            int titleId = getResources().getIdentifier("alertTitle", "id", "android");
+            TextView titleView = dialog.findViewById(titleId);
+            if (titleView != null) titleView.setTextColor(0xFFe94560);
+
+            TextView messageView = dialog.findViewById(android.R.id.message);
+            if (messageView != null) messageView.setTextColor(0xFFcccccc);
+
+            android.widget.Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (pos != null) pos.setTextColor(0xFFe94560);
+
+            android.widget.Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+            if (neg != null) neg.setTextColor(0xFF888888);
+        });
     }
 
     private void setButtonsEnabled(boolean enabled) {
