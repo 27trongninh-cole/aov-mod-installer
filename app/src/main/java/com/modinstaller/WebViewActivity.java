@@ -158,8 +158,12 @@ public class WebViewActivity extends AppCompatActivity {
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
 
-                // Web chỉ nhận ảnh (PNG) và ZIP — lọc đúng MIME type thay vì */*,
-                // giúp Files app chỉ hiện đúng loại file cần thiết.
+                // QUAN TRỌNG: setType phải luôn là "*/*" — bất kỳ MIME type nào
+                // bắt đầu bằng "image/" (kể cả image/png cụ thể) sẽ khiến Android 13+
+                // tự động ưu tiên Photo Picker thay vì mở Files app thật.
+                // Lọc loại file cụ thể (PNG/ZIP) chỉ qua EXTRA_MIME_TYPES, không qua setType.
+                intent.setType("*/*");
+
                 String[] acceptTypes = fileChooserParams.getAcceptTypes();
                 java.util.List<String> mimeTypes = new java.util.ArrayList<>();
                 if (acceptTypes != null) {
@@ -170,20 +174,9 @@ public class WebViewActivity extends AppCompatActivity {
                             mimeTypes.add("application/zip");
                             mimeTypes.add("application/x-zip-compressed");
                         } else if (t.startsWith("image/")) mimeTypes.add(t);
-                        else if (t.startsWith(".")) {
-                            // Đuôi file lạ không map được — fallback */* để không chặn nhầm
-                        }
                     }
                 }
-
-                if (mimeTypes.isEmpty()) {
-                    // Không xác định được loại cụ thể → cho chọn mọi file
-                    intent.setType("*/*");
-                } else if (mimeTypes.size() == 1) {
-                    intent.setType(mimeTypes.get(0));
-                } else {
-                    // Nhiều loại (vd ảnh + zip) → setType chung, lọc chi tiết qua EXTRA_MIME_TYPES
-                    intent.setType("*/*");
+                if (!mimeTypes.isEmpty()) {
                     intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toArray(new String[0]));
                 }
 
