@@ -156,18 +156,39 @@ public class WebViewActivity extends AppCompatActivity {
 
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("*/*");
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
 
-                // Giữ nguyên accept types từ web (vd .png, .zip) nếu có, nhưng
-                // không set MIME quá hẹp để tránh Android lại ưu tiên Photo Picker
+                // Web chỉ nhận ảnh (PNG) và ZIP — lọc đúng MIME type thay vì */*,
+                // giúp Files app chỉ hiện đúng loại file cần thiết.
                 String[] acceptTypes = fileChooserParams.getAcceptTypes();
-                if (acceptTypes != null && acceptTypes.length > 0) {
-                    intent.putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes);
+                java.util.List<String> mimeTypes = new java.util.ArrayList<>();
+                if (acceptTypes != null) {
+                    for (String t : acceptTypes) {
+                        if (t == null || t.isEmpty()) continue;
+                        if (t.equals(".png") || t.equals("image/png")) mimeTypes.add("image/png");
+                        else if (t.equals(".zip") || t.contains("zip")) {
+                            mimeTypes.add("application/zip");
+                            mimeTypes.add("application/x-zip-compressed");
+                        } else if (t.startsWith("image/")) mimeTypes.add(t);
+                        else if (t.startsWith(".")) {
+                            // Đuôi file lạ không map được — fallback */* để không chặn nhầm
+                        }
+                    }
+                }
+
+                if (mimeTypes.isEmpty()) {
+                    // Không xác định được loại cụ thể → cho chọn mọi file
+                    intent.setType("*/*");
+                } else if (mimeTypes.size() == 1) {
+                    intent.setType(mimeTypes.get(0));
+                } else {
+                    // Nhiều loại (vd ảnh + zip) → setType chung, lọc chi tiết qua EXTRA_MIME_TYPES
+                    intent.setType("*/*");
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toArray(new String[0]));
                 }
 
                 try {
-                    fileChooserLauncher.launch(Intent.createChooser(intent, "Chọn file"));
+                    fileChooserLauncher.launch(intent);
                 } catch (Exception e) {
                     fileChooserCallback = null;
                     Toast.makeText(WebViewActivity.this,
