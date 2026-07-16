@@ -140,6 +140,9 @@ public class WebViewActivity extends AppCompatActivity {
         });
 
         // Bridge <input type="file"> của web sang file picker thật của Android
+        // Dùng ACTION_OPEN_DOCUMENT thay vì createIntent() mặc định để tránh
+        // Android tự động mở "Photo Picker" (giao diện Truy cập riêng tư gây phiền)
+        // — ép luôn mở app Files thật sự cho cả chọn file lẫn nhiều file.
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
@@ -149,14 +152,22 @@ public class WebViewActivity extends AppCompatActivity {
                 }
                 fileChooserCallback = filePathCallback;
 
-                Intent intent = fileChooserParams.createIntent();
-                // Cho phép chọn nhiều file nếu web yêu cầu (multiple attribute)
                 boolean allowMultiple = fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
+
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
+
+                // Giữ nguyên accept types từ web (vd .png, .zip) nếu có, nhưng
+                // không set MIME quá hẹp để tránh Android lại ưu tiên Photo Picker
+                String[] acceptTypes = fileChooserParams.getAcceptTypes();
+                if (acceptTypes != null && acceptTypes.length > 0) {
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes);
+                }
 
                 try {
-                    fileChooserLauncher.launch(intent);
+                    fileChooserLauncher.launch(Intent.createChooser(intent, "Chọn file"));
                 } catch (Exception e) {
                     fileChooserCallback = null;
                     Toast.makeText(WebViewActivity.this,
