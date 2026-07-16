@@ -8,6 +8,8 @@ import android.os.Environment;
 import android.util.Base64;
 import android.view.View;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -16,6 +18,8 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.File;
@@ -29,6 +33,30 @@ public class WebViewActivity extends AppCompatActivity {
 
     private WebView webView;
     private ProgressBar progressBar;
+    private ValueCallback<Uri[]> fileChooserCallback;
+
+    private final ActivityResultLauncher<Intent> fileChooserLauncher =
+        registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (fileChooserCallback == null) return;
+
+            Uri[] resultUris = null;
+            if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                Intent data = result.getData();
+                if (data.getClipData() != null) {
+                    // Nhiều file được chọn cùng lúc
+                    int count = data.getClipData().getItemCount();
+                    resultUris = new Uri[count];
+                    for (int i = 0; i < count; i++) {
+                        resultUris[i] = data.getClipData().getItemAt(i).getUri();
+                    }
+                } else if (data.getData() != null) {
+                    // 1 file duy nhất
+                    resultUris = new Uri[]{data.getData()};
+                }
+            }
+            fileChooserCallback.onReceiveValue(resultUris);
+            fileChooserCallback = null;
+        });
 
     // JS được inject ngay khi trang load xong, chặn mọi <a download> hoặc
     // window.open trên blob: URL để đọc dữ liệu NGAY LÚC CÒN TỒN TẠI,
@@ -108,6 +136,34 @@ public class WebViewActivity extends AppCompatActivity {
                 if (progressBar != null) progressBar.setVisibility(View.GONE);
                 // Inject ngay khi trang load xong để hook sẵn, tránh miss blob download
                 view.evaluateJavascript(INTERCEPT_JS, null);
+            }
+        });
+
+        // Bridge <input type="file"> của web sang file picker thật của Android
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
+                                              FileChooserParams fileChooserParams) {
+                if (fileChooserCallback != null) {
+                    fileChooserCallback.onReceiveValue(null);
+                }
+                fileChooserCallback = filePathCallback;
+
+                Intent intent = fileChooserParams.createIntent();
+                // Cho phép chọn nhiều file nếu web yêu cầu (multiple attribute)
+                boolean allowMultiple = fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+
+                try {
+                    fileChooserLauncher.launch(intent);
+                } catch (Exception e) {
+                    fileChooserCallback = null;
+                    Toast.makeText(WebViewActivity.this,
+                        "Không mở được trình chọn file: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    return false;
+                }
+                return true;
             }
         });
 
@@ -191,6 +247,10 @@ public class WebViewActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (fileChooserCallback != null) {
+            fileChooserCallback.onReceiveValue(null);
+            fileChooserCallback = null;
+        }
         if (webView != null) {
             webView.destroy();
         }
