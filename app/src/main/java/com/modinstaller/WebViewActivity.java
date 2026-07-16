@@ -35,6 +35,8 @@ public class WebViewActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> fileChooserCallback;
     private boolean pendingFolderMultiple = false;
+    private java.util.List<String[]> pendingFolderFiles = null;
+    private int pendingFolderIndex = 0;
 
     private final ActivityResultLauncher<Uri> folderPickerLauncher =
         registerForActivityResult(new ActivityResultContracts.OpenDocumentTree(), treeUri -> {
@@ -325,27 +327,56 @@ public class WebViewActivity extends AppCompatActivity {
         }
         Toast.makeText(this, "Đang nạp " + filesData.size() + " file từ thư mục...", Toast.LENGTH_SHORT).show();
 
-        StringBuilder js = new StringBuilder();
-        js.append("(async function() {");
-        js.append("  var dt = new DataTransfer();");
-        for (int i = 0; i < filesData.size(); i++) {
-            String[] f = filesData.get(i);
-            String name = f[0].replace("\\", "\\\\").replace("'", "\\'");
-            String base64 = f[1];
-            String mime = f[2];
-            js.append("  try {");
-            js.append("    var res").append(i).append(" = await fetch('data:").append(mime)
-              .append(";base64,").append(base64).append("');");
-            js.append("    var blob").append(i).append(" = await res").append(i).append(".blob();");
-            js.append("    var file").append(i).append(" = new File([blob").append(i).append("], '")
-              .append(name).append("', { type: '").append(mime).append("' });");
-            js.append("    dt.items.add(file").append(i).append(");");
-            js.append("  } catch (e) { console.error('Lỗi nạp file:', e); }");
-        }
-        js.append("  if (typeof handleFiles === 'function') { handleFiles(dt.files); }");
-        js.append("})();");
+        // Khởi tạo mảng chứa file tạm ở phía JS trước khi gửi từng file một
+        webView.evaluateJavascript("window.__androidFolderFiles = [];", null);
 
-        webView.evaluateJavascript(js.toString(), null);
+        // Gửi TỪNG file một qua JS riêng lẻ (thay vì gộp base64 của tất cả
+        // file vào 1 câu JS khổng lồ) để tránh OutOfMemory / crash WebView
+        // khi thư mục có nhiều ảnh.
+        sendFilesSequentially(filesData, 0);
+    }
+
+    private void sendFilesSequentially(java.util.List<String[]> filesData, int index) {
+        if (index >= filesData.size()) {
+            // Đã gửi xong toàn bộ file → gọi handleFiles() 1 lần duy nhất
+            String finalJs =
+                "(function() {" +
+                "  if (typeof handleFiles === 'function' && window.__androidFolderFiles) {" +
+                "    var dt = new DataTransfer();" +
+                "    window.__androidFolderFiles.forEach(function(f) { dt.items.add(f); });" +
+                "    handleFiles(dt.files);" +
+                "    window.__androidFolderFiles = [];" +
+                "  }" +
+                "})();";
+            webView.evaluateJavascript(finalJs, null);
+            pendingFolderFiles = null;
+            pendingFolderIndex = 0;
+            return;
+        }
+
+        String[] f = filesData.get(index);
+        String name = f[0].replace("\\", "\\\\").replace("'", "\\'");
+        String base64 = f[1];
+        String mime = f[2];
+
+        String js =
+            "fetch('data:" + mime + ";base64," + base64 + "')" +
+            "  .then(function(res) { return res.blob(); })" +
+            "  .then(function(blob) {" +
+            "    var file = new File([blob], '" + name + "', { type: '" + mime + "' });" +
+            "    window.__androidFolderFiles.push(file);" +
+            "    AndroidBlobDownload.onFolderFileReady();" +
+            "  })" +
+            "  .catch(function(e) {" +
+            "    console.error('Lỗi nạp file " + name + ":', e);" +
+            "    AndroidBlobDownload.onFolderFileReady();" +
+            "  });";
+
+        // Đợi JS báo xong file này (qua interface) rồi mới gửi file tiếp theo,
+        // tránh dồn quá nhiều Promise cùng lúc gây nghẽn bộ nhớ.
+        pendingFolderFiles = filesData;
+        pendingFolderIndex = index;
+        webView.evaluateJavascript(js, null);
     }
 
     private class BlobDownloadInterface {
@@ -378,6 +409,17 @@ public class WebViewActivity extends AppCompatActivity {
         public void onError(String error) {
             runOnUiThread(() -> Toast.makeText(WebViewActivity.this,
                 "Lỗi tải file: " + error, Toast.LENGTH_LONG).show());
+        }
+
+        // JS gọi lại khi 1 file trong thư mục đã được nạp xong (thành công
+        // hoặc lỗi) — trigger gửi file tiếp theo trong hàng đợi tuần tự.
+        @JavascriptInterface
+        public void onFolderFileReady() {
+            runOnUiThread(() -> {
+                if (pendingFolderFiles == null) return;
+                int nextIndex = pendingFolderIndex + 1;
+                sendFilesSequentially(pendingFolderFiles, nextIndex);
+            });
         }
     }
 
