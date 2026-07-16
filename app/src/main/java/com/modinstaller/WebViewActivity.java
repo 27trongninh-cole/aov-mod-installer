@@ -34,6 +34,22 @@ public class WebViewActivity extends AppCompatActivity {
     private WebView webView;
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> fileChooserCallback;
+    private boolean pendingFolderMultiple = false;
+
+    private final ActivityResultLauncher<Uri> folderPickerLauncher =
+        registerForActivityResult(new ActivityResultContracts.OpenDocumentTree(), treeUri -> {
+            if (treeUri == null) {
+                if (fileChooserCallback != null) {
+                    fileChooserCallback.onReceiveValue(null);
+                    fileChooserCallback = null;
+                }
+                return;
+            }
+            // Duyệt file PNG/ZIP bên trong thư mục đã chọn, gửi nội dung base64
+            // ngược lại cho web qua JS — vì WebView <input> không tự đọc được
+            // từ 1 cây thư mục (DocumentTree), phải tự đọc và giả lập chọn file.
+            new Thread(() -> readFolderAndInjectToWeb(treeUri)).start();
+        });
 
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
         registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -153,6 +169,26 @@ public class WebViewActivity extends AppCompatActivity {
                 fileChooserCallback = filePathCallback;
 
                 boolean allowMultiple = fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+                String[] acceptTypes = fileChooserParams.getAcceptTypes();
+
+                // folderInput (webkitdirectory) không set accept cụ thể (PNG/ZIP),
+                // trong khi fileInput luôn có accept=".png,.zip" — dùng đặc điểm
+                // này để phân biệt, vì Android không truyền thẳng thuộc tính
+                // webkitdirectory qua FileChooserParams.
+                boolean looksLikeFolderRequest = allowMultiple && hasNoUsefulAcceptTypes(acceptTypes);
+
+                if (looksLikeFolderRequest) {
+                    try {
+                        pendingFolderMultiple = true;
+                        folderPickerLauncher.launch(null);
+                    } catch (Exception e) {
+                        fileChooserCallback = null;
+                        Toast.makeText(WebViewActivity.this,
+                            "Không mở được trình chọn thư mục: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        return false;
+                    }
+                    return true;
+                }
 
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -164,7 +200,6 @@ public class WebViewActivity extends AppCompatActivity {
                 // Lọc loại file cụ thể (PNG/ZIP) chỉ qua EXTRA_MIME_TYPES, không qua setType.
                 intent.setType("*/*");
 
-                String[] acceptTypes = fileChooserParams.getAcceptTypes();
                 java.util.List<String> mimeTypes = new java.util.ArrayList<>();
                 if (acceptTypes != null) {
                     for (String t : acceptTypes) {
@@ -226,6 +261,91 @@ public class WebViewActivity extends AppCompatActivity {
         } catch (Exception e) {
             Toast.makeText(this, "Lỗi tải file: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    // folderInput (webkitdirectory) không set accept cụ thể — dùng đặc điểm
+    // này để phân biệt với fileInput (luôn có accept=".png,.zip")
+    private boolean hasNoUsefulAcceptTypes(String[] acceptTypes) {
+        if (acceptTypes == null || acceptTypes.length == 0) return true;
+        for (String t : acceptTypes) {
+            if (t != null && !t.isEmpty() && !t.equals("*/*")) return false;
+        }
+        return true;
+    }
+
+    // Đọc toàn bộ file PNG/ZIP trong thư mục đã chọn (DocumentTree), convert
+    // sang base64, rồi gửi từng file cho JS dựng lại thành đối tượng File
+    // thật trong trình duyệt, sau đó gọi thẳng handleFiles() có sẵn của web.
+    private void readFolderAndInjectToWeb(Uri treeUri) {
+        java.util.List<String[]> filesData = new java.util.ArrayList<>(); // [name, base64, mimeType]
+        try {
+            androidx.documentfile.provider.DocumentFile dir =
+                androidx.documentfile.provider.DocumentFile.fromTreeUri(this, treeUri);
+            if (dir != null && dir.isDirectory()) {
+                for (androidx.documentfile.provider.DocumentFile child : dir.listFiles()) {
+                    if (!child.isFile()) continue;
+                    String name = child.getName();
+                    if (name == null) continue;
+                    String lower = name.toLowerCase();
+                    if (!lower.endsWith(".png") && !lower.endsWith(".zip")) continue;
+
+                    try (java.io.InputStream is = getContentResolver().openInputStream(child.getUri())) {
+                        if (is == null) continue;
+                        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                        byte[] chunk = new byte[8192];
+                        int len;
+                        while ((len = is.read(chunk)) != -1) buffer.write(chunk, 0, len);
+                        String base64 = Base64.encodeToString(buffer.toByteArray(), Base64.NO_WRAP);
+                        String mime = lower.endsWith(".png") ? "image/png" : "application/zip";
+                        filesData.add(new String[]{name, base64, mime});
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        } catch (Exception e) {
+            runOnUiThread(() -> Toast.makeText(this,
+                "Lỗi đọc thư mục: " + e.getMessage(), Toast.LENGTH_LONG).show());
+        }
+
+        // Báo cho callback gốc của WebView biết là "không có file nào" qua
+        // đường input chuẩn — vì ta sẽ tự bơm file vào JS bằng cách khác.
+        runOnUiThread(() -> {
+            if (fileChooserCallback != null) {
+                fileChooserCallback.onReceiveValue(null);
+                fileChooserCallback = null;
+            }
+            injectFolderFilesToWeb(filesData);
+        });
+    }
+
+    private void injectFolderFilesToWeb(java.util.List<String[]> filesData) {
+        if (filesData.isEmpty()) {
+            Toast.makeText(this, "Thư mục không có file PNG/ZIP hợp lệ", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "Đang nạp " + filesData.size() + " file từ thư mục...", Toast.LENGTH_SHORT).show();
+
+        StringBuilder js = new StringBuilder();
+        js.append("(async function() {");
+        js.append("  var dt = new DataTransfer();");
+        for (int i = 0; i < filesData.size(); i++) {
+            String[] f = filesData.get(i);
+            String name = f[0].replace("\\", "\\\\").replace("'", "\\'");
+            String base64 = f[1];
+            String mime = f[2];
+            js.append("  try {");
+            js.append("    var res").append(i).append(" = await fetch('data:").append(mime)
+              .append(";base64,").append(base64).append("');");
+            js.append("    var blob").append(i).append(" = await res").append(i).append(".blob();");
+            js.append("    var file").append(i).append(" = new File([blob").append(i).append("], '")
+              .append(name).append("', { type: '").append(mime).append("' });");
+            js.append("    dt.items.add(file").append(i).append(");");
+            js.append("  } catch (e) { console.error('Lỗi nạp file:', e); }");
+        }
+        js.append("  if (typeof handleFiles === 'function') { handleFiles(dt.files); }");
+        js.append("})();");
+
+        webView.evaluateJavascript(js.toString(), null);
     }
 
     private class BlobDownloadInterface {

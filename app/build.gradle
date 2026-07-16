@@ -10,8 +10,8 @@ android {
         applicationId "com.modinstaller"
         minSdk 26
         targetSdk 34
-        versionCode 9
-        versionName "2.2.9"
+        versionCode 10
+        versionName "2.3.0"
     }
 
     signingConfigs {
@@ -44,6 +44,7 @@ dependencies {
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'androidx.documentfile:documentfile:1.0.1'
 
     // Shizuku
     implementation 'dev.rikka.shizuku:api:13.1.5'
