@@ -174,6 +174,9 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        // BNK Studio — khóa mặc định, mở khóa bằng cách bấm 7 lần liên tiếp
+        setupBnkStudioButton();
+
         // Nút thông tin (!)
         findViewById(R.id.btn_info_fix).setOnClickListener(v ->
             showDialog("🔧 Fix Resources",
@@ -460,6 +463,77 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return intent;
+    }
+
+    // ─── BNK Studio: khóa mặc định, mở khóa bằng 7 lần bấm liên tiếp ────
+
+    private static final String PREF_BNK_UNLOCKED = "bnk_studio_unlocked";
+    private int bnkTapCount = 0;
+    private long bnkFirstTapTime = 0;
+    private static final long BNK_TAP_RESET_MS = 3000; // quá 3s không bấm tiếp thì reset đếm
+
+    private void setupBnkStudioButton() {
+        View btnBnk = findViewById(R.id.btn_tool_bnk);
+        TextView tvIcon = findViewById(R.id.tv_bnk_icon);
+        TextView tvTitle = findViewById(R.id.tv_bnk_title);
+        TextView tvSubtitle = findViewById(R.id.tv_bnk_subtitle);
+        TextView tvArrow = findViewById(R.id.tv_bnk_arrow);
+
+        boolean unlocked = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+            .getBoolean(PREF_BNK_UNLOCKED, false);
+
+        if (unlocked) {
+            applyBnkUnlockedUI(tvIcon, tvTitle, tvSubtitle, tvArrow);
+        }
+
+        btnBnk.setOnClickListener(v -> {
+            boolean currentlyUnlocked = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+                .getBoolean(PREF_BNK_UNLOCKED, false);
+
+            if (currentlyUnlocked) {
+                // Đã mở khóa → mở thẳng WebView
+                Intent intent = new Intent(this, WebViewActivity.class);
+                intent.putExtra(WebViewActivity.EXTRA_URL, "https://bnkenin.netlify.app/");
+                intent.putExtra(WebViewActivity.EXTRA_TITLE, "BNK Studio");
+                startActivity(intent);
+                return;
+            }
+
+            // Chưa mở khóa → đếm số lần bấm liên tiếp trong khoảng thời gian ngắn
+            long now = System.currentTimeMillis();
+            if (now - bnkFirstTapTime > BNK_TAP_RESET_MS) {
+                bnkTapCount = 0;
+                bnkFirstTapTime = now;
+            }
+            bnkTapCount++;
+
+            if (bnkTapCount >= 7) {
+                bnkTapCount = 0;
+                AlertDialog d = new AlertDialog.Builder(this)
+                    .setTitle("👀 Bị phát hiện rồi!")
+                    .setMessage("Đúng là không qua mắt được bạn, nhưng sử dụng tính năng chưa ra mắt "
+                        + "có thể kèm theo rủi ro khóa tài khoản. Tiếp tục?")
+                    .setPositiveButton("Tiếp tục", (dlg, w) -> {
+                        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                            .putBoolean(PREF_BNK_UNLOCKED, true).apply();
+                        applyBnkUnlockedUI(tvIcon, tvTitle, tvSubtitle, tvArrow);
+                        showToast("Đã mở khóa BNK Studio!");
+                    })
+                    .setNegativeButton("Hủy", null)
+                    .create();
+                styleDialog(d);
+                d.show();
+            }
+        });
+    }
+
+    private void applyBnkUnlockedUI(TextView tvIcon, TextView tvTitle, TextView tvSubtitle, TextView tvArrow) {
+        tvIcon.setText("🗺️");
+        tvTitle.setText("BNK Studio");
+        tvTitle.setTextColor(0xFFffffff);
+        tvSubtitle.setText("Công cụ thiết kế bản đồ nâng cao");
+        tvSubtitle.setTextColor(0xFF888899);
+        tvArrow.setText("›");
     }
 
     private boolean checkShizuku() {
