@@ -44,7 +44,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Li�n Qu�n Mobile � by Ninfinity"
+                    android:text="Liên Quân Mobile - by Ninfinity"
                     android:textSize="12sp"
                     android:textColor="#666666" />
             </LinearLayout>
@@ -60,7 +60,7 @@
                     android:id="@+id/tv_shizuku_status"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text=""
+                    android:text="●"
                     android:textSize="16sp"
                     android:textColor="#888888"
                     android:layout_marginEnd="4dp" />
@@ -87,7 +87,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="TH�NG TIN"
+                android:text="THÔNG TIN"
                 android:textSize="11sp"
                 android:textColor="#555555"
                 android:letterSpacing="0.1"
@@ -105,7 +105,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Phi�n bn game"
+                    android:text="Phiên bản game"
                     android:textColor="#888888"
                     android:textSize="13sp" />
 
@@ -113,7 +113,7 @@
                     android:id="@+id/tv_game_version"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="ang ti..."
+                    android:text="Đang tải..."
                     android:textColor="#ffffff"
                     android:textSize="13sp"
                     android:textStyle="bold" />
@@ -130,7 +130,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Trng th�i Resources"
+                    android:text="Trạng thái Resources"
                     android:textColor="#888888"
                     android:textSize="13sp" />
 
@@ -138,7 +138,7 @@
                     android:id="@+id/tv_resources_status"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Cha kim tra"
+                    android:text="Chưa kiểm tra"
                     android:textColor="#888888"
                     android:textSize="13sp"
                     android:textStyle="bold" />
@@ -175,7 +175,7 @@
                     <TextView
                         android:layout_width="36dp"
                         android:layout_height="wrap_content"
-                        android:text=""
+                        android:text="🔧"
                         android:textSize="22sp"
                         android:gravity="center"
                         android:layout_marginEnd="12dp" />
@@ -196,7 +196,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Ti v� c�i Resources t server"
+                            android:text="Tải và cài Resources từ server"
                             android:textColor="#ffcccc"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -206,7 +206,7 @@
                     android:id="@+id/btn_info_fix"
                     android:layout_width="48dp"
                     android:layout_height="match_parent"
-                    android:text=""
+                    android:text="ⓘ"
                     android:textSize="18sp"
                     android:textColor="#ffffff"
                     android:gravity="center"
@@ -248,7 +248,7 @@
                     <TextView
                         android:layout_width="36dp"
                         android:layout_height="wrap_content"
-                        android:text=""
+                        android:text="📦"
                         android:textSize="22sp"
                         android:gravity="center"
                         android:layout_marginEnd="12dp" />
@@ -261,7 +261,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="C�i file Mod"
+                            android:text="Cài file Mod"
                             android:textColor="#ffffff"
                             android:textSize="16sp"
                             android:textStyle="bold" />
@@ -269,7 +269,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Chn file .zip mod  c�i"
+                            android:text="Chọn file .zip mod để cài"
                             android:textColor="#aaaacc"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -279,7 +279,7 @@
                     android:id="@+id/btn_info_mod"
                     android:layout_width="48dp"
                     android:layout_height="match_parent"
-                    android:text=""
+                    android:text="ⓘ"
                     android:textSize="18sp"
                     android:textColor="#ffffff"
                     android:gravity="center"
@@ -321,7 +321,7 @@
                     <TextView
                         android:layout_width="36dp"
                         android:layout_height="wrap_content"
-                        android:text=""
+                        android:text="🗑️"
                         android:textSize="22sp"
                         android:gravity="center"
                         android:layout_marginEnd="12dp" />
@@ -334,7 +334,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="X�a tt c Mod"
+                            android:text="Xóa tất cả Mod"
                             android:textColor="#ffffff"
                             android:textSize="16sp"
                             android:textStyle="bold" />
@@ -342,7 +342,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Kh�i phc Resources gc"
+                            android:text="Khôi phục Resources gốc"
                             android:textColor="#888888"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -352,7 +352,7 @@
                     android:id="@+id/btn_info_remove"
                     android:layout_width="48dp"
                     android:layout_height="match_parent"
-                    android:text=""
+                    android:text="ⓘ"
                     android:textSize="18sp"
                     android:textColor="#ffffff"
                     android:gravity="center"
@@ -376,7 +376,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="C�NG C TO MOD"
+            android:text="CÔNG CỤ TẠO MOD"
             android:textSize="11sp"
             android:textColor="#555555"
             android:letterSpacing="0.1"
@@ -407,7 +407,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text=""
+                    android:text="🗺️"
                     android:textSize="20sp"
                     android:layout_marginEnd="12dp" />
 
@@ -428,7 +428,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Thay th texture bn "
+                        android:text="Thay thế texture bản đồ"
                         android:textColor="#666688"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -436,7 +436,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="�"
+                    android:text="›"
                     android:textColor="#e94560"
                     android:textSize="22sp" />
             </LinearLayout>
@@ -468,7 +468,7 @@
                     android:id="@+id/tv_bnk_icon"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text=""
+                    android:text="🔒"
                     android:textSize="20sp"
                     android:layout_marginEnd="12dp" />
 
@@ -491,7 +491,7 @@
                         android:id="@+id/tv_bnk_subtitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Sp ra mt"
+                        android:text="Sắp ra mắt"
                         android:textColor="#333344"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -527,7 +527,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text=""
+                    android:text="🔒"
                     android:textSize="20sp"
                     android:layout_marginEnd="12dp" />
 
@@ -548,7 +548,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="ang ph�t trin"
+                        android:text="Đang phát triển"
                         android:textColor="#333344"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -559,7 +559,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text=" Ninfinity | Infinite Creativity. All rights reserved."
+            android:text="Ⓒ Ninfinity | Infinite Creativity. All rights reserved."
             android:textSize="11sp"
             android:textColor="#333355"
             android:gravity="center"

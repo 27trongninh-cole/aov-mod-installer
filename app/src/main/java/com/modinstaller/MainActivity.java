@@ -531,7 +531,7 @@ public class MainActivity extends AppCompatActivity {
         tvIcon.setText("🗺️");
         tvTitle.setText("BNK Studio");
         tvTitle.setTextColor(0xFFffffff);
-        tvSubtitle.setText("Công cụ thiết kế bản đồ nâng cao");
+        tvSubtitle.setText("Tạo mod nhạc/giọng tướng");
         tvSubtitle.setTextColor(0xFF888899);
         tvArrow.setText("›");
     }
