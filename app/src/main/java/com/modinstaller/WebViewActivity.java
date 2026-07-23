@@ -95,6 +95,7 @@ public class WebViewActivity extends AppCompatActivity {
         "      })" +
         "      .catch(function(err) { AndroidBlobDownload.onError(err.toString()); });" +
         "  }" +
+        // Bắt click vào <a> gắn trong DOM thật (trường hợp mapdes)
         "  document.addEventListener('click', function(e) {" +
         "    var el = e.target;" +
         "    while (el && el.tagName !== 'A') el = el.parentElement;" +
@@ -104,6 +105,7 @@ public class WebViewActivity extends AppCompatActivity {
         "      handleBlobUrl(el.href, name);" +
         "    }" +
         "  }, true);" +
+        // Chặn window.open trên blob URL
         "  var originalOpen = window.open;" +
         "  window.open = function(url, name, specs) {" +
         "    if (url && url.indexOf('blob:') === 0) {" +
@@ -111,6 +113,20 @@ public class WebViewActivity extends AppCompatActivity {
         "      return null;" +
         "    }" +
         "    return originalOpen.call(window, url, name, specs);" +
+        "  };" +
+        // QUAN TRỌNG: override click() ngay tại nguồn của HTMLAnchorElement.
+        // Một số web (vd BNK Studio) tạo thẻ <a> hoàn toàn trong bộ nhớ JS
+        // (document.createElement('a')) rồi gọi .click() ngay mà KHÔNG gắn
+        // vào DOM (không appendChild) — sự kiện click khi đó không bao giờ
+        // 'nổi bọt' lên document nên listener ở trên không bắt được.
+        // Override trực tiếp hàm click() để chặn được cả trường hợp này.
+        "  var originalAnchorClick = HTMLAnchorElement.prototype.click;" +
+        "  HTMLAnchorElement.prototype.click = function() {" +
+        "    if (this.href && this.href.indexOf('blob:') === 0 && this.download) {" +
+        "      handleBlobUrl(this.href, this.download);" +
+        "      return;" +
+        "    }" +
+        "    return originalAnchorClick.call(this);" +
         "  };" +
         "})();";
 
