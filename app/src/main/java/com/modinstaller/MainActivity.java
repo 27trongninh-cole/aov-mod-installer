@@ -626,11 +626,27 @@ public class MainActivity extends AppCompatActivity {
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+
+            // Đọc output trong thread riêng để readLine() không tự treo luồng
+            // gọi chính nếu process không đóng stdout đúng cách — timeout ở
+            // waitFor() bên dưới mới có tác dụng thực sự khi đó.
             StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = br.readLine()) != null) sb.append(line).append("\n");
-            p.waitFor();
+            Thread reader = new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    String line;
+                    while ((line = br.readLine()) != null) sb.append(line).append("\n");
+                } catch (IOException ignored) {
+                }
+            });
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean finished = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return "Exception: rish timeout (không phản hồi sau 20s)";
+            }
+            reader.join(2000); // chờ thêm chút để đọc nốt output còn sót
             return sb.toString().trim();
         } catch (Exception e) {
             return "Exception: " + e.getMessage();
@@ -652,10 +668,23 @@ public class MainActivity extends AppCompatActivity {
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            new BufferedReader(new InputStreamReader(p.getInputStream()))
-                .lines().forEach(l -> {});
-            int exit = p.waitFor();
-            return exit == 0;
+
+            Thread reader = new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    while (br.readLine() != null) { /* drain output */ }
+                } catch (IOException ignored) {
+                }
+            });
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean finished = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return false;
+            }
+            reader.join(2000);
+            return p.exitValue() == 0;
         } catch (Exception e) {
             return false;
         }
@@ -894,7 +923,7 @@ public class MainActivity extends AppCompatActivity {
 
             updateProgressDialog("Đang giải nén vào game...", 55);
             // rish unzip thẳng vào Android/data, ZIP có cấu trúc Resources/...
-            boolean copied = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\"");
+            boolean copied = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\" < /dev/null");
 
             updateProgressDialog("Dọn dẹp...", 90);
             tmpZip.delete();
@@ -951,7 +980,7 @@ public class MainActivity extends AppCompatActivity {
             extractTmpDir.mkdirs();
 
             String extractOutput = runShellOutput(
-                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" 2>&1; echo EXIT:$?");
+                "unzip -o -P '' \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT:$?");
             boolean extractSuccess = extractOutput.contains("EXIT:0");
 
             if (!extractSuccess && isPasswordProtectedError(extractOutput)) {
@@ -1035,7 +1064,7 @@ public class MainActivity extends AppCompatActivity {
 
             String output = runShellOutput(
                 "unzip -o -P \"" + safePassword + "\" \"" + tmpZip.getAbsolutePath()
-                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" 2>&1; echo EXIT:$?");
+                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT:$?");
             boolean success = output.contains("EXIT:0");
 
             if (!success) {
@@ -1185,7 +1214,7 @@ public class MainActivity extends AppCompatActivity {
             copyFile(backupZip, tmpZip2);
 
             updateProgressDialog("Đang khôi phục...", 65);
-            boolean restored = runShell("unzip -o \"" + tmpZip2.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\"");
+            boolean restored = runShell("unzip -o \"" + tmpZip2.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\" < /dev/null");
 
             updateProgressDialog("Dọn dẹp...", 90);
             tmpZip2.delete();
