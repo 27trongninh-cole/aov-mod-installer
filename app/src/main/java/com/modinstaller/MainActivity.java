@@ -947,17 +947,110 @@ public class MainActivity extends AppCompatActivity {
             String unzipDest = detectUnzipDest(zipUri);
 
             updateProgressDialog("Đang cài mod vào game...", 70);
-            boolean success = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + unzipDest + "\"");
-            tmpZip.delete();
+            String output = runShellOutput("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + unzipDest + "\" 2>&1; echo EXIT:$?");
+            boolean success = output.contains("EXIT:0");
+
+            dismissProgressDialog();
+
+            if (success) {
+                tmpZip.delete();
+                updateResourcesStatus();
+                showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+                mainHandler.post(() -> {
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                });
+            } else if (isPasswordProtectedError(output)) {
+                // Zip cần mật khẩu — hiện dialog nhập, giữ tmpZip lại để thử lại
+                mainHandler.post(() -> promptZipPassword(tmpZip, unzipDest));
+            } else {
+                tmpZip.delete();
+                showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
+                mainHandler.post(() -> {
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                });
+            }
+
+        } catch (Exception e) {
+            dismissProgressDialog();
+            showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
+            mainHandler.post(() -> {
+                setButtonsEnabled(true);
+                showProgress(false);
+            });
+        }
+    }
+
+    // unzip trả về các thông báo đặc trưng khi file cần mật khẩu, ví dụ:
+    // "incorrect password" hoặc "need password"
+    private boolean isPasswordProtectedError(String output) {
+        String lower = output.toLowerCase();
+        return lower.contains("password") || lower.contains("incorrect passwd")
+            || lower.contains("encrypted");
+    }
+
+    private void promptZipPassword(File tmpZip, String unzipDest) {
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setHint("Nhập mật khẩu giải nén");
+        input.setTextColor(0xFFffffff);
+        input.setHintTextColor(0xFF888888);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        input.setPadding(pad, pad, pad, pad);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("🔒 File mod có mật khẩu")
+            .setMessage("File ZIP này được bảo vệ bằng mật khẩu. Vui lòng nhập để tiếp tục cài mod.")
+            .setView(input)
+            .setPositiveButton("Xác nhận", (d, w) -> {
+                String password = input.getText().toString();
+                if (password.isEmpty()) {
+                    showToast("Vui lòng nhập mật khẩu!");
+                    tmpZip.delete();
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                    return;
+                }
+                setButtonsEnabled(false);
+                showProgress(true);
+                executor.execute(() -> installModWithPassword(tmpZip, unzipDest, password));
+            })
+            .setNegativeButton("Hủy", (d, w) -> {
+                tmpZip.delete();
+                setButtonsEnabled(true);
+                showProgress(false);
+            })
+            .setCancelable(false)
+            .create();
+        styleDialog(dialog);
+        dialog.show();
+    }
+
+    private void installModWithPassword(File tmpZip, String unzipDest, String password) {
+        try {
+            showProgressDialog("Đang giải nén với mật khẩu...");
+            updateProgressDialog("Đang cài mod vào game...", 60);
+
+            // Escape dấu " trong password để tránh vỡ câu lệnh shell
+            String safePassword = password.replace("\"", "\\\"");
+            String output = runShellOutput(
+                "unzip -o -P \"" + safePassword + "\" \"" + tmpZip.getAbsolutePath()
+                + "\" -d \"" + unzipDest + "\" 2>&1; echo EXIT:$?");
+            boolean success = output.contains("EXIT:0");
 
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
+            tmpZip.delete();
 
             if (success) {
                 updateResourcesStatus();
                 showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+            } else if (isPasswordProtectedError(output)) {
+                showDialog("Sai mật khẩu", "Mật khẩu không đúng. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
             } else {
-                showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
+                showDialog("Lỗi", "Cài mod thất bại: " + output.split("EXIT:")[0].trim());
             }
 
         } catch (Exception e) {
