@@ -931,7 +931,7 @@ public class MainActivity extends AppCompatActivity {
     private void installMod(Uri zipUri) {
         try {
             showProgressDialog("Đang cài mod...");
-            updateProgressDialog("Đang copy file mod...", 20);
+            updateProgressDialog("Đang copy file mod...", 15);
 
             // Copy zip ra external cache để rish có thể đọc
             File tmpZip = new File(getExternalCacheDir(), "mod_tmp.zip");
@@ -942,35 +942,37 @@ public class MainActivity extends AppCompatActivity {
                 while ((len = is.read(buf)) > 0) os.write(buf, 0, len);
             }
 
-            updateProgressDialog("Đang phát hiện cấu trúc...", 40);
-            // Detect cấu trúc ZIP để biết unzip vào đâu
-            String unzipDest = detectUnzipDest(zipUri);
+            updateProgressDialog("Đang giải nén tạm để dò cấu trúc...", 35);
+            // Giải nén vào thư mục tạm trước (thay vì đoán cấu trúc trước),
+            // vì ZIP có thể bọc thêm bất kỳ số lớp thư mục nào phía trước
+            // (vd Mod_nè/com.garena.game.kgvn/files/Resources/...).
+            File extractTmpDir = new File(getExternalCacheDir(), "mod_extract_tmp");
+            deleteRecursive(extractTmpDir);
+            extractTmpDir.mkdirs();
 
-            updateProgressDialog("Đang cài mod vào game...", 70);
-            String output = runShellOutput("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + unzipDest + "\" 2>&1; echo EXIT:$?");
-            boolean success = output.contains("EXIT:0");
+            String extractOutput = runShellOutput(
+                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" 2>&1; echo EXIT:$?");
+            boolean extractSuccess = extractOutput.contains("EXIT:0");
 
-            dismissProgressDialog();
-
-            if (success) {
-                tmpZip.delete();
-                updateResourcesStatus();
-                showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
-                mainHandler.post(() -> {
-                    setButtonsEnabled(true);
-                    showProgress(false);
-                });
-            } else if (isPasswordProtectedError(output)) {
-                // Zip cần mật khẩu — hiện dialog nhập, giữ tmpZip lại để thử lại
-                mainHandler.post(() -> promptZipPassword(tmpZip, unzipDest));
-            } else {
-                tmpZip.delete();
-                showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
-                mainHandler.post(() -> {
-                    setButtonsEnabled(true);
-                    showProgress(false);
-                });
+            if (!extractSuccess && isPasswordProtectedError(extractOutput)) {
+                dismissProgressDialog();
+                mainHandler.post(() -> promptZipPasswordV2(tmpZip, extractTmpDir));
+                return;
             }
+
+            if (!extractSuccess) {
+                dismissProgressDialog();
+                deleteRecursive(extractTmpDir);
+                tmpZip.delete();
+                showDialog("Lỗi", "Giải nén file mod thất bại. Kiểm tra lại file ZIP.");
+                mainHandler.post(() -> {
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                });
+                return;
+            }
+
+            finishInstallModFromExtractedDir(extractTmpDir, tmpZip);
 
         } catch (Exception e) {
             dismissProgressDialog();
@@ -982,15 +984,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // unzip trả về các thông báo đặc trưng khi file cần mật khẩu, ví dụ:
-    // "incorrect password" hoặc "need password"
-    private boolean isPasswordProtectedError(String output) {
-        String lower = output.toLowerCase();
-        return lower.contains("password") || lower.contains("incorrect passwd")
-            || lower.contains("encrypted");
-    }
-
-    private void promptZipPassword(File tmpZip, String unzipDest) {
+    private void promptZipPasswordV2(File tmpZip, File extractTmpDir) {
         android.widget.EditText input = new android.widget.EditText(this);
         input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
             | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -1008,6 +1002,7 @@ public class MainActivity extends AppCompatActivity {
                 String password = input.getText().toString();
                 if (password.isEmpty()) {
                     showToast("Vui lòng nhập mật khẩu!");
+                    deleteRecursive(extractTmpDir);
                     tmpZip.delete();
                     setButtonsEnabled(true);
                     showProgress(false);
@@ -1015,9 +1010,10 @@ public class MainActivity extends AppCompatActivity {
                 }
                 setButtonsEnabled(false);
                 showProgress(true);
-                executor.execute(() -> installModWithPassword(tmpZip, unzipDest, password));
+                executor.execute(() -> installModWithPasswordV2(tmpZip, extractTmpDir, password));
             })
             .setNegativeButton("Hủy", (d, w) -> {
+                deleteRecursive(extractTmpDir);
                 tmpZip.delete();
                 setButtonsEnabled(true);
                 showProgress(false);
@@ -1028,35 +1024,41 @@ public class MainActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    private void installModWithPassword(File tmpZip, String unzipDest, String password) {
+    private void installModWithPasswordV2(File tmpZip, File extractTmpDir, String password) {
         try {
             showProgressDialog("Đang giải nén với mật khẩu...");
-            updateProgressDialog("Đang cài mod vào game...", 60);
+            updateProgressDialog("Đang dò cấu trúc...", 30);
 
-            // Escape dấu " trong password để tránh vỡ câu lệnh shell
             String safePassword = password.replace("\"", "\\\"");
+            deleteRecursive(extractTmpDir);
+            extractTmpDir.mkdirs();
+
             String output = runShellOutput(
                 "unzip -o -P \"" + safePassword + "\" \"" + tmpZip.getAbsolutePath()
-                + "\" -d \"" + unzipDest + "\" 2>&1; echo EXIT:$?");
+                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" 2>&1; echo EXIT:$?");
             boolean success = output.contains("EXIT:0");
 
-            updateProgressDialog("Hoàn tất!", 100);
-            dismissProgressDialog();
-            tmpZip.delete();
-
-            if (success) {
-                updateResourcesStatus();
-                showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
-            } else if (isPasswordProtectedError(output)) {
-                showDialog("Sai mật khẩu", "Mật khẩu không đúng. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
-            } else {
-                showDialog("Lỗi", "Cài mod thất bại: " + output.split("EXIT:")[0].trim());
+            if (!success) {
+                dismissProgressDialog();
+                deleteRecursive(extractTmpDir);
+                tmpZip.delete();
+                if (isPasswordProtectedError(output)) {
+                    showDialog("Sai mật khẩu", "Mật khẩu không đúng. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
+                } else {
+                    showDialog("Lỗi", "Cài mod thất bại: " + output.split("EXIT:")[0].trim());
+                }
+                mainHandler.post(() -> {
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                });
+                return;
             }
+
+            finishInstallModFromExtractedDir(extractTmpDir, tmpZip);
 
         } catch (Exception e) {
             dismissProgressDialog();
             showDialog("Lỗi", "Đã xảy ra lỗi: " + e.getMessage());
-        } finally {
             mainHandler.post(() -> {
                 setButtonsEnabled(true);
                 showProgress(false);
@@ -1064,28 +1066,98 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private String detectUnzipDest(Uri zipUri) {
-        // Dựa vào cấu trúc ZIP để xác định thư mục đích
-        // Dạng 1: com.garena.game.kgvn/files/Resources/... → unzip vào Android/data/
-        // Dạng 2: files/Resources/... → unzip vào Android/data/com.garena.game.kgvn/
-        // Dạng 3: Resources/... → unzip vào Android/data/com.garena.game.kgvn/files/
-        try (InputStream is = getContentResolver().openInputStream(zipUri);
-             ZipInputStream zis = new ZipInputStream(is)) {
-            ZipEntry entry = zis.getNextEntry();
-            if (entry != null) {
-                String name = entry.getName();
-                if (name.startsWith("com.garena.game.kgvn/")) {
-                    return "/storage/emulated/0/Android/data/";
-                } else if (name.startsWith("files/")) {
-                    return "/storage/emulated/0/Android/data/com.garena.game.kgvn/";
-                } else if (name.startsWith("Resources/")) {
-                    return DATA_PATH + "/";
-                }
-            }
-        } catch (Exception e) {
-            // fallback
+    // Sau khi đã giải nén ra thư mục tạm (dù có mật khẩu hay không), quét
+    // cây thư mục thật để tìm đúng vị trí Resources/ hoặc
+    // com.garena.game.kgvn/, bất kể bị bọc bởi bao nhiêu lớp thư mục cha
+    // (vd TenMod/com.garena.game.kgvn/files/Resources/...).
+    private void finishInstallModFromExtractedDir(File extractTmpDir, File tmpZip) {
+        updateProgressDialog("Đang xác định vị trí mod...", 55);
+
+        File sourceDir = locateResourcesRoot(extractTmpDir);
+        String targetPath;
+
+        if (sourceDir == null) {
+            dismissProgressDialog();
+            deleteRecursive(extractTmpDir);
+            tmpZip.delete();
+            showDialog("Lỗi", "Không tìm thấy thư mục Resources trong file mod.\n\n"
+                + "ZIP phải chứa thư mục Resources ở đâu đó bên trong (có thể lồng "
+                + "trong nhiều thư mục cha), ví dụ:\n"
+                + "• Resources/...\n"
+                + "• files/Resources/...\n"
+                + "• com.garena.game.kgvn/files/Resources/...\n"
+                + "• TenMod/com.garena.game.kgvn/files/Resources/...");
+            mainHandler.post(() -> {
+                setButtonsEnabled(true);
+                showProgress(false);
+            });
+            return;
         }
-        return DATA_PATH + "/";
+
+        // sourceDir chính là thư mục Resources tìm được → copy thẳng đè lên RESOURCES_PATH
+        targetPath = RESOURCES_PATH;
+
+        updateProgressDialog("Đang cài mod vào game...", 80);
+        boolean copied = runShell("cp -rT \"" + sourceDir.getAbsolutePath() + "\" \"" + targetPath + "\"");
+
+        deleteRecursive(extractTmpDir);
+        tmpZip.delete();
+
+        updateProgressDialog("Hoàn tất!", 100);
+        dismissProgressDialog();
+
+        if (copied) {
+            updateResourcesStatus();
+            showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+        } else {
+            showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
+        }
+
+        mainHandler.post(() -> {
+            setButtonsEnabled(true);
+            showProgress(false);
+        });
+    }
+
+    // Duyệt đệ quy cây thư mục đã giải nén, tìm thư mục tên "Resources"
+    // ở bất kỳ độ sâu nào. Trả về chính thư mục đó (không phải thư mục cha).
+    private File locateResourcesRoot(File dir) {
+        if (dir == null || !dir.isDirectory()) return null;
+        File[] children = dir.listFiles();
+        if (children == null) return null;
+
+        for (File child : children) {
+            if (child.isDirectory() && child.getName().equals("Resources")) {
+                return child;
+            }
+        }
+        // Không tìm thấy ở cấp này → đệ quy xuống các thư mục con
+        for (File child : children) {
+            if (child.isDirectory()) {
+                File found = locateResourcesRoot(child);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private void deleteRecursive(File file) {
+        if (file == null || !file.exists()) return;
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursive(child);
+            }
+        }
+        file.delete();
+    }
+
+    // unzip trả về các thông báo đặc trưng khi file cần mật khẩu, ví dụ:
+    // "incorrect password" hoặc "need password"
+    private boolean isPasswordProtectedError(String output) {
+        String lower = output.toLowerCase();
+        return lower.contains("password") || lower.contains("incorrect passwd")
+            || lower.contains("encrypted");
     }
 
     // ─── Tính năng 3: Xóa Mod ────────────────────────────────────
