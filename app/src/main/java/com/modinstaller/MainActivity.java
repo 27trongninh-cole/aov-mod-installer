@@ -1198,7 +1198,23 @@ public class MainActivity extends AppCompatActivity {
         }
 
         updateProgressDialog("Đang cài mod vào game...", 80);
-        boolean copied = runShell("cp -rT \"" + sourceDir.getAbsolutePath() + "\" \"" + targetPath + "\"");
+        String cpOutput = runShellOutput(
+            "cp -rT \"" + sourceDir.getAbsolutePath() + "\" \"" + targetPath + "\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean copied = cpOutput.contains("EXIT_CODE_IS_0_HERE");
+
+        // Xác minh THỰC TẾ sau khi copy: đếm số file trong sourceDir (nguồn)
+        // và kiểm tra 1 file mẫu có thực sự xuất hiện trong đích hay không —
+        // vì lệnh cp có thể "thành công" (exit 0) nhưng copy nhầm chỗ hoặc
+        // rish chạy với quyền không đủ để ghi đè thực sự vào Android/data/.
+        int sourceFileCount = countFilesRecursive(sourceDir);
+        String sampleRelativePath = getFirstFileRelativePath(sourceDir);
+        String verifyOutput = "";
+        boolean verifiedInTarget = false;
+        if (sampleRelativePath != null) {
+            String checkPath = targetPath + "/" + sampleRelativePath;
+            verifyOutput = runShellOutput("[ -e \"" + checkPath + "\" ] && echo VERIFIED_EXISTS || echo VERIFIED_MISSING");
+            verifiedInTarget = verifyOutput.contains("VERIFIED_EXISTS");
+        }
 
         deleteRecursive(extractTmpDir);
         tmpZip.delete();
@@ -1206,17 +1222,74 @@ public class MainActivity extends AppCompatActivity {
         updateProgressDialog("Hoàn tất!", 100);
         dismissProgressDialog();
 
-        if (copied) {
+        // Debug info chi tiết — giúp xác định chính xác lỗi nằm ở khâu nào
+        // (giải nén / xác định thư mục / copy vào game) thay vì chỉ báo
+        // chung chung "thành công" trong khi thực tế có thể không phải vậy.
+        StringBuilder debugInfo = new StringBuilder();
+        debugInfo.append("📂 Nguồn (đã giải nén): ").append(sourceDir.getAbsolutePath()).append("\n");
+        debugInfo.append("📊 Số file trong nguồn: ").append(sourceFileCount).append("\n");
+        debugInfo.append("🎯 Đích: ").append(targetPath).append("\n");
+        debugInfo.append("⚙️ Lệnh cp exit code 0: ").append(copied ? "CÓ" : "KHÔNG").append("\n");
+        if (!copied) {
+            debugInfo.append("❌ Chi tiết lỗi cp: ").append(cpOutput.replaceAll("EXIT_CODE_IS_\\d+_HERE", "").trim()).append("\n");
+        }
+        if (sampleRelativePath != null) {
+            debugInfo.append("🔍 File mẫu kiểm tra: ").append(sampleRelativePath).append("\n");
+            debugInfo.append("✔️ File mẫu có ở đích sau copy: ").append(verifiedInTarget ? "CÓ (xác nhận)" : "KHÔNG THẤY (đáng ngờ!)").append("\n");
+        }
+
+        boolean actuallySuccess = copied && verifiedInTarget;
+
+        if (actuallySuccess) {
             updateResourcesStatus();
-            showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+            showScrollableDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.\n\n─── Debug info ───\n" + debugInfo);
         } else {
-            showDialog("Lỗi", "Cài mod thất bại. Hãy chạy Fix Resources trước rồi thử lại.");
+            showScrollableDialog("⚠️ Nghi ngờ thất bại", "Lệnh copy chạy xong nhưng KHÔNG xác minh được file đã thực sự vào game.\n\n─── Debug info ───\n" + debugInfo
+                + "\n\nHãy chụp màn hình bảng này gửi để debug thêm.");
         }
 
         mainHandler.post(() -> {
             setButtonsEnabled(true);
             showProgress(false);
         });
+    }
+
+    // Đếm tổng số file (không tính thư mục) trong 1 cây thư mục, dùng để
+    // debug xem giải nén có đầy đủ hay bị thiếu sót.
+    private int countFilesRecursive(File dir) {
+        int count = 0;
+        File[] children = dir.listFiles();
+        if (children == null) return 0;
+        for (File child : children) {
+            if (child.isDirectory()) count += countFilesRecursive(child);
+            else count++;
+        }
+        return count;
+    }
+
+    // Lấy đường dẫn tương đối của 1 file bất kỳ trong cây thư mục (dùng làm
+    // mẫu để verify sau khi copy — không cần duyệt toàn bộ, chỉ cần 1 file
+    // đại diện để xác nhận copy có thực sự chạm tới đích hay không).
+    private String getFirstFileRelativePath(File dir) {
+        return getFirstFileRelativePathInternal(dir, "");
+    }
+
+    private String getFirstFileRelativePathInternal(File dir, String prefix) {
+        File[] children = dir.listFiles();
+        if (children == null) return null;
+        for (File child : children) {
+            if (child.isFile()) {
+                return prefix.isEmpty() ? child.getName() : prefix + "/" + child.getName();
+            }
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                String newPrefix = prefix.isEmpty() ? child.getName() : prefix + "/" + child.getName();
+                String found = getFirstFileRelativePathInternal(child, newPrefix);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     // Duyệt đệ quy cây thư mục đã giải nén, tìm thư mục tên "Resources"
@@ -1426,6 +1499,34 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(title)
                 .setMessage(msg)
                 .setPositiveButton("OK", null)
+                .create();
+            styleDialog(dialog);
+            dialog.show();
+        });
+    }
+
+    // Dialog cho nội dung dài (debug info nhiều dòng) — bọc trong ScrollView
+    // tường minh + text có thể chọn/copy được, dễ đọc và chụp màn hình hơn
+    // so với AlertDialog message thường.
+    private void showScrollableDialog(String title, String msg) {
+        mainHandler.post(() -> {
+            android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
+            int pad = (int) (20 * getResources().getDisplayMetrics().density);
+            scrollView.setPadding(pad, pad, pad, pad);
+
+            TextView textView = new TextView(this);
+            textView.setText(msg);
+            textView.setTextColor(0xFFcccccc);
+            textView.setTextSize(13);
+            textView.setTextIsSelectable(true);
+            textView.setLineSpacing(4, 1.1f);
+
+            scrollView.addView(textView);
+
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(scrollView)
+                .setPositiveButton("Đóng", null)
                 .create();
             styleDialog(dialog);
             dialog.show();
