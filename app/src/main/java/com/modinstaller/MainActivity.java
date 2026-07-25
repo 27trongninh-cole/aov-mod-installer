@@ -33,6 +33,9 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+
+import net.lingala.zip4j.ZipFile;
+import net.lingala.zip4j.exception.ZipException;
 import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -917,16 +920,31 @@ public class MainActivity extends AppCompatActivity {
             }
 
             updateProgressDialog("Chuẩn bị giải nén...", 35);
-            // Copy zip ra external cache để rish có thể đọc
-            File tmpZip = new File(getExternalCacheDir(), "mod_ninstaller_tmp.zip");
-            copyFile(backupZip, tmpZip);
+            // Giải nén bằng Zip4j vào thư mục app control được (không cần rish
+            // cho bước này) — rish chỉ dùng ở bước copy cuối vào Android/data/.
+            File extractTmpDir = new File(getExternalCacheDir(), "fix_resources_extract_tmp");
+            deleteRecursive(extractTmpDir);
+            extractTmpDir.mkdirs();
 
-            updateProgressDialog("Đang giải nén vào game...", 55);
-            // rish unzip thẳng vào Android/data, ZIP có cấu trúc Resources/...
-            boolean copied = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\" < /dev/null");
+            updateProgressDialog("Đang giải nén...", 50);
+            ZipExtractResult result = extractZipWithZip4j(backupZip, extractTmpDir, null);
+
+            if (!result.success) {
+                dismissProgressDialog();
+                deleteRecursive(extractTmpDir);
+                String msg = result.needsPassword
+                    ? "File Resources trên server bị đặt mật khẩu — đây là lỗi cấu hình, vui lòng báo Ninfinity."
+                    : "Giải nén Resources thất bại: " + result.errorMessage;
+                showDialog("Lỗi", msg);
+                return;
+            }
+
+            updateProgressDialog("Đang copy vào game...", 75);
+            // rish chỉ làm nhiệm vụ copy file đã giải nén sẵn vào Android/data/
+            boolean copied = runShell("cp -rT \"" + extractTmpDir.getAbsolutePath() + "\" \"" + DATA_PATH + "\"");
 
             updateProgressDialog("Dọn dẹp...", 90);
-            tmpZip.delete();
+            deleteRecursive(extractTmpDir);
 
             // Tự tạo file marker "fixed"
             if (copied) {
@@ -962,7 +980,8 @@ public class MainActivity extends AppCompatActivity {
             showProgressDialog("Đang cài mod...");
             updateProgressDialog("Đang copy file mod...", 15);
 
-            // Copy zip ra external cache để rish có thể đọc
+            // Copy zip ra external cache — Zip4j đọc/ghi trực tiếp bằng Java,
+            // không cần rish cho bước giải nén nữa.
             File tmpZip = new File(getExternalCacheDir(), "mod_tmp.zip");
             try (InputStream is = getContentResolver().openInputStream(zipUri);
                  OutputStream os = new FileOutputStream(tmpZip)) {
@@ -972,41 +991,23 @@ public class MainActivity extends AppCompatActivity {
             }
 
             updateProgressDialog("Đang giải nén tạm để dò cấu trúc...", 35);
-            // Giải nén vào thư mục tạm trước (thay vì đoán cấu trúc trước),
-            // vì ZIP có thể bọc thêm bất kỳ số lớp thư mục nào phía trước
-            // (vd Mod_nè/com.garena.game.kgvn/files/Resources/...).
             File extractTmpDir = new File(getExternalCacheDir(), "mod_extract_tmp");
             deleteRecursive(extractTmpDir);
             extractTmpDir.mkdirs();
 
-            // Thử giải nén bình thường trước (không ép -P '') — vì một số
-            // bản unzip xử lý sai khi truyền -P '' cho file KHÔNG mã hóa,
-            // gây báo lỗi giả dù file hoàn toàn hợp lệ. Luôn redirect stdin
-            // từ /dev/null để nếu file có mật khẩu, unzip thất bại ngay lập
-            // tức thay vì treo chờ nhập password qua bàn phím.
-            String extractOutput = runShellOutput(
-                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT_CODE_IS_$?_HERE");
+            ZipExtractResult result = extractZipWithZip4j(tmpZip, extractTmpDir, null);
 
-            // QUAN TRỌNG: không chỉ dựa vào exit code — một số bản unzip vẫn
-            // trả về 0 dù có lỗi cục bộ giữa chừng (vd Zlib error ở 1 file
-            // trong nhiều file). Phải quét toàn bộ output tìm dấu hiệu lỗi
-            // thực sự, bất kể exit code báo gì.
-            boolean hasErrorSignal = isPasswordProtectedError(extractOutput);
-            boolean exitZero = extractOutput.contains("EXIT_CODE_IS_0_HERE");
-            boolean extractSuccess = exitZero && !hasErrorSignal;
-
-            if (!extractSuccess && hasErrorSignal) {
+            if (result.needsPassword) {
                 dismissProgressDialog();
                 mainHandler.post(() -> promptZipPasswordV2(tmpZip, extractTmpDir));
                 return;
             }
 
-            if (!extractSuccess) {
+            if (!result.success) {
                 dismissProgressDialog();
                 deleteRecursive(extractTmpDir);
                 tmpZip.delete();
-                showDialog("Lỗi", "Giải nén file mod thất bại.\n\nChi tiết: "
-                    + extractOutput.replaceAll("EXIT_CODE_IS_\\d+_HERE", "").trim());
+                showDialog("Lỗi", "Giải nén file mod thất bại.\n\nChi tiết: " + result.errorMessage);
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
                     showProgress(false);
@@ -1023,6 +1024,51 @@ public class MainActivity extends AppCompatActivity {
                 setButtonsEnabled(true);
                 showProgress(false);
             });
+        }
+    }
+
+    // Kết quả giải nén Zip4j: phân biệt rõ 3 trạng thái để UI xử lý đúng.
+    private static class ZipExtractResult {
+        boolean success;
+        boolean needsPassword;
+        String errorMessage;
+    }
+
+    // Giải nén bằng Zip4j — thư viện Java thuần hỗ trợ đầy đủ ZipCrypto/AES
+    // password, không phụ thuộc binary unzip hệ thống (vốn có bản rút gọn
+    // trên nhiều ROM Android, gây lỗi "invalid option -- P" đã gặp phải).
+    private ZipExtractResult extractZipWithZip4j(File zipFile, File destDir, String password) {
+        ZipExtractResult result = new ZipExtractResult();
+        try {
+            ZipFile zf = new ZipFile(zipFile);
+            if (password != null) {
+                zf.setPassword(password.toCharArray());
+            }
+
+            if (zf.isEncrypted() && password == null) {
+                result.needsPassword = true;
+                return result;
+            }
+
+            zf.extractAll(destDir.getAbsolutePath());
+            result.success = true;
+            return result;
+
+        } catch (ZipException e) {
+            // Zip4j báo lỗi cụ thể khi cần password hoặc password sai
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+            if (msg.contains("password") || msg.contains("wrong password")
+                    || e.getType() == ZipException.Type.WRONG_PASSWORD) {
+                result.needsPassword = true;
+            } else {
+                result.success = false;
+                result.errorMessage = e.getMessage() != null ? e.getMessage() : "Lỗi không xác định khi giải nén";
+            }
+            return result;
+        } catch (Exception e) {
+            result.success = false;
+            result.errorMessage = e.getMessage() != null ? e.getMessage() : "Lỗi không xác định";
+            return result;
         }
     }
 
@@ -1071,26 +1117,19 @@ public class MainActivity extends AppCompatActivity {
             showProgressDialog("Đang giải nén với mật khẩu...");
             updateProgressDialog("Đang dò cấu trúc...", 30);
 
-            String safePassword = password.replace("\"", "\\\"");
             deleteRecursive(extractTmpDir);
             extractTmpDir.mkdirs();
 
-            String output = runShellOutput(
-                "unzip -o -P \"" + safePassword + "\" \"" + tmpZip.getAbsolutePath()
-                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT_CODE_IS_$?_HERE");
-            boolean hasErrorSignal = isPasswordProtectedError(output);
-            boolean exitZero = output.contains("EXIT_CODE_IS_0_HERE");
-            boolean success = exitZero && !hasErrorSignal;
+            ZipExtractResult result = extractZipWithZip4j(tmpZip, extractTmpDir, password);
 
-            if (!success) {
+            if (!result.success) {
                 dismissProgressDialog();
                 deleteRecursive(extractTmpDir);
                 tmpZip.delete();
-                if (hasErrorSignal) {
-                    showDialog("Sai mật khẩu", "Mật khẩu không đúng hoặc file mod bị lỗi. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
+                if (result.needsPassword) {
+                    showDialog("Sai mật khẩu", "Mật khẩu không đúng. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
                 } else {
-                    showDialog("Lỗi", "Cài mod thất bại: "
-                        + output.replaceAll("EXIT_CODE_IS_\\d+_HERE", "").trim());
+                    showDialog("Lỗi", "Cài mod thất bại: " + result.errorMessage);
                 }
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
@@ -1211,15 +1250,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         file.delete();
-    }
-
-    // unzip trả về các thông báo đặc trưng khi file cần mật khẩu, ví dụ:
-    // "incorrect password" hoặc "need password"
-    private boolean isPasswordProtectedError(String output) {
-        String lower = output.toLowerCase();
-        return lower.contains("password") || lower.contains("incorrect passwd")
-            || lower.contains("encrypted") || lower.contains("zlib error")
-            || lower.contains("bad crc") || lower.contains("failed to extract");
     }
 
     // ─── Tính năng 3: Xóa Mod ────────────────────────────────────

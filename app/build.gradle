@@ -10,8 +10,8 @@ android {
         applicationId "com.modinstaller"
         minSdk 26
         targetSdk 34
-        versionCode 19
-        versionName "2.3.9"
+        versionCode 20
+        versionName "2.4.0"
     }
 
     signingConfigs {
@@ -49,4 +49,9 @@ dependencies {
     // Shizuku
     implementation 'dev.rikka.shizuku:api:13.1.5'
     implementation 'dev.rikka.shizuku:provider:13.1.5'
+
+    // Zip4j — giải nén ZIP có mật khẩu (ZipCrypto + AES) bằng Java thuần,
+    // không cần binary unzip ngoài (tránh phụ thuộc vào bản unzip rút gọn
+    // của từng ROM Android, vốn không hỗ trợ -P như đã gặp lỗi).
+    implementation 'net.lingala.zip4j:zip4j:2.11.5'
 }
