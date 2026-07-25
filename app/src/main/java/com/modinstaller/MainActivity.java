@@ -941,7 +941,7 @@ public class MainActivity extends AppCompatActivity {
 
             updateProgressDialog("Đang copy vào game...", 75);
             // rish chỉ làm nhiệm vụ copy file đã giải nén sẵn vào Android/data/
-            boolean copied = runShell("cp -rT \"" + extractTmpDir.getAbsolutePath() + "\" \"" + DATA_PATH + "\"");
+            boolean copied = runShell("mkdir -p \"" + DATA_PATH + "\" && cp -r \"" + extractTmpDir.getAbsolutePath() + "/.\" \"" + DATA_PATH + "/\"");
 
             updateProgressDialog("Dọn dẹp...", 90);
             deleteRecursive(extractTmpDir);
@@ -1199,7 +1199,7 @@ public class MainActivity extends AppCompatActivity {
 
         updateProgressDialog("Đang cài mod vào game...", 80);
         String cpOutput = runShellOutput(
-            "cp -rT \"" + sourceDir.getAbsolutePath() + "\" \"" + targetPath + "\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+            "mkdir -p \"" + targetPath + "\" && cp -r \"" + sourceDir.getAbsolutePath() + "/.\" \"" + targetPath + "/\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
         boolean copied = cpOutput.contains("EXIT_CODE_IS_0_HERE");
 
         // Xác minh THỰC TẾ sau khi copy: đếm số file trong sourceDir (nguồn)
