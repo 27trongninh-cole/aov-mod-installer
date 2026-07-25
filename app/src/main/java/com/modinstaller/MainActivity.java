@@ -626,11 +626,27 @@ public class MainActivity extends AppCompatActivity {
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+
+            // Đọc output trong thread riêng để readLine() không tự treo luồng
+            // gọi chính nếu process không đóng stdout đúng cách — timeout ở
+            // waitFor() bên dưới mới có tác dụng thực sự khi đó.
             StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = br.readLine()) != null) sb.append(line).append("\n");
-            p.waitFor();
+            Thread reader = new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    String line;
+                    while ((line = br.readLine()) != null) sb.append(line).append("\n");
+                } catch (IOException ignored) {
+                }
+            });
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean finished = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return "Exception: rish timeout (không phản hồi sau 20s)";
+            }
+            reader.join(2000); // chờ thêm chút để đọc nốt output còn sót
             return sb.toString().trim();
         } catch (Exception e) {
             return "Exception: " + e.getMessage();
@@ -652,10 +668,23 @@ public class MainActivity extends AppCompatActivity {
             ProcessBuilder pb = new ProcessBuilder("sh", rishFile.getAbsolutePath(), "-c", cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            new BufferedReader(new InputStreamReader(p.getInputStream()))
-                .lines().forEach(l -> {});
-            int exit = p.waitFor();
-            return exit == 0;
+
+            Thread reader = new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                    while (br.readLine() != null) { /* drain output */ }
+                } catch (IOException ignored) {
+                }
+            });
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean finished = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return false;
+            }
+            reader.join(2000);
+            return p.exitValue() == 0;
         } catch (Exception e) {
             return false;
         }
@@ -894,7 +923,7 @@ public class MainActivity extends AppCompatActivity {
 
             updateProgressDialog("Đang giải nén vào game...", 55);
             // rish unzip thẳng vào Android/data, ZIP có cấu trúc Resources/...
-            boolean copied = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\"");
+            boolean copied = runShell("unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\" < /dev/null");
 
             updateProgressDialog("Dọn dẹp...", 90);
             tmpZip.delete();
@@ -950,8 +979,13 @@ public class MainActivity extends AppCompatActivity {
             deleteRecursive(extractTmpDir);
             extractTmpDir.mkdirs();
 
+            // Thử giải nén bình thường trước (không ép -P '') — vì một số
+            // bản unzip xử lý sai khi truyền -P '' cho file KHÔNG mã hóa,
+            // gây báo lỗi giả dù file hoàn toàn hợp lệ. Luôn redirect stdin
+            // từ /dev/null để nếu file có mật khẩu, unzip thất bại ngay lập
+            // tức thay vì treo chờ nhập password qua bàn phím.
             String extractOutput = runShellOutput(
-                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" 2>&1; echo EXIT:$?");
+                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT:$?");
             boolean extractSuccess = extractOutput.contains("EXIT:0");
 
             if (!extractSuccess && isPasswordProtectedError(extractOutput)) {
@@ -964,7 +998,8 @@ public class MainActivity extends AppCompatActivity {
                 dismissProgressDialog();
                 deleteRecursive(extractTmpDir);
                 tmpZip.delete();
-                showDialog("Lỗi", "Giải nén file mod thất bại. Kiểm tra lại file ZIP.");
+                showDialog("Lỗi", "Giải nén file mod thất bại.\n\nChi tiết: "
+                    + extractOutput.replace("EXIT:1", "").trim());
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
                     showProgress(false);
@@ -1035,7 +1070,7 @@ public class MainActivity extends AppCompatActivity {
 
             String output = runShellOutput(
                 "unzip -o -P \"" + safePassword + "\" \"" + tmpZip.getAbsolutePath()
-                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" 2>&1; echo EXIT:$?");
+                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT:$?");
             boolean success = output.contains("EXIT:0");
 
             if (!success) {
@@ -1164,46 +1199,41 @@ public class MainActivity extends AppCompatActivity {
 
     private void removeMod() {
         try {
-            File backupZip = new File(getFilesDir(), "resources_backup.zip");
-            if (!backupZip.exists()) {
-                showDialog("Lỗi", "Không có backup Resources. Hãy chạy Fix Resources trước.");
+            boolean backupExists = fileExists(BACKUP_PATH);
+            if (!backupExists) {
+                showDialog("Lỗi", "Không tìm thấy Resources_ninfinity_backup. Hãy chạy Fix Resources trước.");
+                mainHandler.post(() -> {
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                });
                 return;
             }
 
             showProgressDialog("Đang xóa mod...");
-            updateProgressDialog("Đang xóa Resources hiện tại...", 20);
+            updateProgressDialog("Đang xóa Resources hiện tại...", 30);
             boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"");
             if (!deleted) {
                 dismissProgressDialog();
                 showDialog("Lỗi", "Không thể xóa Resources hiện tại.");
+                mainHandler.post(() -> {
+                    setButtonsEnabled(true);
+                    showProgress(false);
+                });
                 return;
             }
 
-            updateProgressDialog("Đang giải nén Resources gốc...", 40);
-            // Copy zip ra external cache để rish có thể đọc
-            File tmpZip2 = new File(getExternalCacheDir(), "mod_ninstaller_tmp.zip");
-            copyFile(backupZip, tmpZip2);
-
-            updateProgressDialog("Đang khôi phục...", 65);
-            boolean restored = runShell("unzip -o \"" + tmpZip2.getAbsolutePath() + "\" -d \"" + DATA_PATH + "\"");
-
-            updateProgressDialog("Dọn dẹp...", 90);
-            tmpZip2.delete();
-
-            runShell("rm -rf \"" + BACKUP_PATH + "\"");
-
-            // Tự tạo file marker "fixed" và xóa "modded" sau khi khôi phục
-            if (restored) {
-                String configPath = RESOURCES_PATH + "/" + gameVersion + "/Config";
-                runShell("mkdir -p \"" + configPath + "\" && rm -f \"" + configPath + "/" + MARKER_MODDED + "\" && touch \"" + configPath + "/" + MARKER_FIXED + "\"");
-            }
+            // Khôi phục nguyên trạng ban đầu: đổi tên backup về lại tên gốc,
+            // KHÔNG unzip lại — người dùng cần bấm Fix Resources lần nữa
+            // nếu muốn tiếp tục mod sau khi đã xóa.
+            updateProgressDialog("Đang khôi phục Resources gốc...", 70);
+            boolean restored = runShell("mv \"" + BACKUP_PATH + "\" \"" + RESOURCES_PATH + "\"");
 
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
 
             if (restored) {
                 updateResourcesStatus();
-                showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!");
+                showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!\n\nLưu ý: cần bấm Fix Resources lại trước khi cài mod mới.");
             } else {
                 showDialog("Lỗi", "Khôi phục Resources thất bại.");
             }
