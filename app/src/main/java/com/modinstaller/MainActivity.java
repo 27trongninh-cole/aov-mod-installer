@@ -985,10 +985,17 @@ public class MainActivity extends AppCompatActivity {
             // từ /dev/null để nếu file có mật khẩu, unzip thất bại ngay lập
             // tức thay vì treo chờ nhập password qua bàn phím.
             String extractOutput = runShellOutput(
-                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT:$?");
-            boolean extractSuccess = extractOutput.contains("EXIT:0");
+                "unzip -o \"" + tmpZip.getAbsolutePath() + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT_CODE_IS_$?_HERE");
 
-            if (!extractSuccess && isPasswordProtectedError(extractOutput)) {
+            // QUAN TRỌNG: không chỉ dựa vào exit code — một số bản unzip vẫn
+            // trả về 0 dù có lỗi cục bộ giữa chừng (vd Zlib error ở 1 file
+            // trong nhiều file). Phải quét toàn bộ output tìm dấu hiệu lỗi
+            // thực sự, bất kể exit code báo gì.
+            boolean hasErrorSignal = isPasswordProtectedError(extractOutput);
+            boolean exitZero = extractOutput.contains("EXIT_CODE_IS_0_HERE");
+            boolean extractSuccess = exitZero && !hasErrorSignal;
+
+            if (!extractSuccess && hasErrorSignal) {
                 dismissProgressDialog();
                 mainHandler.post(() -> promptZipPasswordV2(tmpZip, extractTmpDir));
                 return;
@@ -999,7 +1006,7 @@ public class MainActivity extends AppCompatActivity {
                 deleteRecursive(extractTmpDir);
                 tmpZip.delete();
                 showDialog("Lỗi", "Giải nén file mod thất bại.\n\nChi tiết: "
-                    + extractOutput.replace("EXIT:1", "").trim());
+                    + extractOutput.replaceAll("EXIT_CODE_IS_\\d+_HERE", "").trim());
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
                     showProgress(false);
@@ -1070,17 +1077,20 @@ public class MainActivity extends AppCompatActivity {
 
             String output = runShellOutput(
                 "unzip -o -P \"" + safePassword + "\" \"" + tmpZip.getAbsolutePath()
-                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT:$?");
-            boolean success = output.contains("EXIT:0");
+                + "\" -d \"" + extractTmpDir.getAbsolutePath() + "\" < /dev/null 2>&1; echo EXIT_CODE_IS_$?_HERE");
+            boolean hasErrorSignal = isPasswordProtectedError(output);
+            boolean exitZero = output.contains("EXIT_CODE_IS_0_HERE");
+            boolean success = exitZero && !hasErrorSignal;
 
             if (!success) {
                 dismissProgressDialog();
                 deleteRecursive(extractTmpDir);
                 tmpZip.delete();
-                if (isPasswordProtectedError(output)) {
-                    showDialog("Sai mật khẩu", "Mật khẩu không đúng. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
+                if (hasErrorSignal) {
+                    showDialog("Sai mật khẩu", "Mật khẩu không đúng hoặc file mod bị lỗi. Vui lòng thử lại bằng cách bấm Cài file Mod lần nữa.");
                 } else {
-                    showDialog("Lỗi", "Cài mod thất bại: " + output.split("EXIT:")[0].trim());
+                    showDialog("Lỗi", "Cài mod thất bại: "
+                        + output.replaceAll("EXIT_CODE_IS_\\d+_HERE", "").trim());
                 }
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
@@ -1131,6 +1141,22 @@ public class MainActivity extends AppCompatActivity {
 
         // sourceDir chính là thư mục Resources tìm được → copy thẳng đè lên RESOURCES_PATH
         targetPath = RESOURCES_PATH;
+
+        // Kiểm tra thư mục tìm được có thực sự chứa file không (phòng
+        // trường hợp giải nén lỗi giữa chừng khiến thư mục gần như rỗng
+        // nhưng vẫn "tồn tại" về mặt kỹ thuật).
+        File[] sourceContents = sourceDir.listFiles();
+        if (sourceContents == null || sourceContents.length == 0) {
+            dismissProgressDialog();
+            deleteRecursive(extractTmpDir);
+            tmpZip.delete();
+            showDialog("Lỗi", "Thư mục Resources trong file mod trống rỗng hoặc giải nén không đầy đủ. Thử tải lại file mod hoặc kiểm tra file ZIP.");
+            mainHandler.post(() -> {
+                setButtonsEnabled(true);
+                showProgress(false);
+            });
+            return;
+        }
 
         updateProgressDialog("Đang cài mod vào game...", 80);
         boolean copied = runShell("cp -rT \"" + sourceDir.getAbsolutePath() + "\" \"" + targetPath + "\"");
@@ -1192,7 +1218,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean isPasswordProtectedError(String output) {
         String lower = output.toLowerCase();
         return lower.contains("password") || lower.contains("incorrect passwd")
-            || lower.contains("encrypted");
+            || lower.contains("encrypted") || lower.contains("zlib error")
+            || lower.contains("bad crc") || lower.contains("failed to extract");
     }
 
     // ─── Tính năng 3: Xóa Mod ────────────────────────────────────
