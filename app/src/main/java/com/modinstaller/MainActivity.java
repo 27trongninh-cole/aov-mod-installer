@@ -1210,9 +1210,18 @@ public class MainActivity extends AppCompatActivity {
         }
 
         updateProgressDialog("Đang cài mod vào game...", 80);
-        String cpOutput = runShellOutput(
-            "mkdir -p \"" + targetPath + "\" && cp -r \"" + sourceDir.getAbsolutePath() + "/.\" \"" + targetPath + "/\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
-        boolean copied = cpOutput.contains("EXIT_CODE_IS_0_HERE");
+
+        // Ghi log cp ra file riêng (thay vì chỉ dựa vào output buffer của
+        // runShellOutput, có thể bị giới hạn) — đọc lại toàn bộ log thật sau
+        // đó để không bỏ sót lỗi cụ thể nào.
+        String cpLogPath = getExternalCacheDir().getAbsolutePath() + "/cp_debug_log.txt";
+        String cmd = "mkdir -p \"" + targetPath + "\" && cp -rv \"" + sourceDir.getAbsolutePath()
+            + "/.\" \"" + targetPath + "/\" > \"" + cpLogPath + "\" 2>&1; echo EXIT_CODE_IS_$?_HERE";
+        String exitCheck = runShellOutput(cmd);
+        boolean copied = exitCheck.contains("EXIT_CODE_IS_0_HERE");
+
+        String cpOutput = runShellOutput("cat \"" + cpLogPath + "\" | tail -n 40");
+        runShell("rm -f \"" + cpLogPath + "\"");
 
         // Xác minh THỰC TẾ sau khi copy: đếm số file trong sourceDir (nguồn)
         // và kiểm tra 1 file mẫu có thực sự xuất hiện trong đích hay không —
@@ -1228,6 +1237,12 @@ public class MainActivity extends AppCompatActivity {
             verifiedInTarget = verifyOutput.contains("VERIFIED_EXISTS");
         }
 
+        // Đếm thực tế số file đã vào đích để so sánh với nguồn — biết chính
+        // xác copy dở dang ở đâu (vd 200/517 file) thay vì chỉ biết có/không.
+        String targetCountOutput = runShellOutput("find \"" + targetPath + "\" -type f 2>/dev/null | wc -l");
+
+        long freeSpaceMB = new File(DATA_PATH).getUsableSpace() / (1024 * 1024);
+
         deleteRecursive(extractTmpDir);
         tmpZip.delete();
 
@@ -1240,11 +1255,11 @@ public class MainActivity extends AppCompatActivity {
         StringBuilder debugInfo = new StringBuilder();
         debugInfo.append("📂 Nguồn (đã giải nén): ").append(sourceDir.getAbsolutePath()).append("\n");
         debugInfo.append("📊 Số file trong nguồn: ").append(sourceFileCount).append("\n");
+        debugInfo.append("📊 Số file THỰC TẾ ở đích (toàn bộ Resources): ").append(targetCountOutput.trim()).append("\n");
+        debugInfo.append("💾 Dung lượng trống còn lại: ").append(freeSpaceMB).append(" MB\n");
         debugInfo.append("🎯 Đích: ").append(targetPath).append("\n");
         debugInfo.append("⚙️ Lệnh cp exit code 0: ").append(copied ? "CÓ" : "KHÔNG").append("\n");
-        if (!copied) {
-            debugInfo.append("❌ Chi tiết lỗi cp: ").append(cpOutput.replaceAll("EXIT_CODE_IS_\\d+_HERE", "").trim()).append("\n");
-        }
+        debugInfo.append("📝 Log cp (40 dòng cuối):\n").append(cpOutput.isEmpty() ? "(trống)" : cpOutput).append("\n");
         if (sampleRelativePath != null) {
             debugInfo.append("🔍 File mẫu kiểm tra: ").append(sampleRelativePath).append("\n");
             debugInfo.append("✔️ File mẫu có ở đích sau copy: ").append(verifiedInTarget ? "CÓ (xác nhận)" : "KHÔNG THẤY (đáng ngờ!)").append("\n");
