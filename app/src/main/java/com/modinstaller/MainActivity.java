@@ -161,6 +161,18 @@ public class MainActivity extends AppCompatActivity {
 
         checkShizukuAndInit();
 
+        // Debug ẩn: long-press vào dòng "Phiên bản game" để chạy chuỗi lệnh
+        // test cp/rish, giúp chẩn đoán lỗi permission mà không cần Termux.
+        if (tvGameVersion != null) {
+            tvGameVersion.setOnLongClickListener(v -> {
+                if (!checkShizuku()) return true;
+                setButtonsEnabled(false);
+                showProgress(true);
+                executor.execute(this::runDebugCpTest);
+                return true;
+            });
+        }
+
         // Load gameVersion đã lưu → hiện tạm ngay (không query trạng thái để tránh race
         // với checkMaintenanceMode/updateResourcesStatus chạy sau khi fetch config xong)
         gameVersion = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
@@ -1312,6 +1324,75 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return null;
+    }
+
+    // ─── Debug: test rish/cp trực tiếp trong app (thay thế Termux đã hỏng) ────
+
+    private void runDebugCpTest() {
+        StringBuilder log = new StringBuilder();
+
+        // Bước 1: rish có phản hồi cơ bản không?
+        String echoTest = runShellOutput("echo TEST123");
+        log.append("1️⃣ echo TEST123 → ").append(echoTest.isEmpty() ? "❌ RỖNG (rish không phản hồi!)" : "✅ " + echoTest).append("\n\n");
+
+        if (echoTest.isEmpty() || echoTest.startsWith("Exception:")) {
+            log.append("⚠️ rish của app không phản hồi lệnh cơ bản nhất.\n");
+            log.append("→ Kiểm tra: Shizuku có thực sự đang chạy, app có bị thu hồi quyền ngầm không.\n");
+            dismissAndShowDebug(log.toString());
+            return;
+        }
+
+        // Bước 2: id — xem UID thực sự đang chạy dưới quyền gì
+        String idTest = runShellOutput("id");
+        log.append("2️⃣ id → ").append(idTest.isEmpty() ? "❌ RỖNG" : idTest).append("\n\n");
+
+        // Bước 3: tạo thư mục test + file trong Android/data/com.garena.game.kgvn/files/
+        String testBase = DATA_PATH + "/debug_cp_test";
+        String srcDir = testBase + "/src/sub";
+        String dstDir = testBase + "/dst";
+
+        String mkdirResult = runShellOutput(
+            "rm -rf \"" + testBase + "\" && mkdir -p \"" + srcDir + "\" && echo hello > \"" + srcDir + "/a.txt\" && echo MKDIR_OK");
+        log.append("3️⃣ Tạo thư mục + file test → ").append(mkdirResult.contains("MKDIR_OK") ? "✅ OK" : "❌ " + mkdirResult).append("\n\n");
+
+        // Bước 4: kiểm tra file test đã thực sự tồn tại
+        String checkSrc = runShellOutput("[ -f \"" + srcDir + "/a.txt\" ] && echo EXISTS || echo MISSING");
+        log.append("4️⃣ File test tồn tại sau khi tạo → ").append(checkSrc.contains("EXISTS") ? "✅ CÓ" : "❌ KHÔNG (" + checkSrc + ")").append("\n\n");
+
+        // Bước 5: thử cp -r nguồn/. đích/ (cú pháp hiện đang dùng trong app)
+        String cpResult = runShellOutput(
+            "mkdir -p \"" + dstDir + "\" && cp -r \"" + testBase + "/src/.\" \"" + dstDir + "/\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean cpOk = cpResult.contains("EXIT_CODE_IS_0_HERE");
+        log.append("5️⃣ cp -r src/. dst/ → ").append(cpOk ? "✅ exit 0" : "❌ " + cpResult).append("\n\n");
+
+        // Bước 6: xác minh file đã thực sự copy sang đích
+        String checkDst = runShellOutput("[ -f \"" + dstDir + "/sub/a.txt\" ] && echo EXISTS || echo MISSING");
+        log.append("6️⃣ File có ở đích sau cp → ").append(checkDst.contains("EXISTS") ? "✅ CÓ (cp hoạt động đúng!)" : "❌ KHÔNG (" + checkDst + ")").append("\n\n");
+
+        // Bước 7: thử ghi ĐÈ lên file đã tồn tại sẵn (mô phỏng tình huống mod)
+        String overwriteTest = runShellOutput(
+            "echo world > \"" + dstDir + "/sub/a.txt\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean overwriteOk = overwriteTest.contains("EXIT_CODE_IS_0_HERE");
+        log.append("7️⃣ Ghi đè file đã tồn tại → ").append(overwriteOk ? "✅ exit 0" : "❌ " + overwriteTest).append("\n\n");
+
+        // Bước 8: thử cp -r đè lên thư mục đích đã có sẵn file (giống hệt tình huống cài mod thật)
+        String cpOverwriteResult = runShellOutput(
+            "cp -r \"" + testBase + "/src/.\" \"" + dstDir + "/\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean cpOverwriteOk = cpOverwriteResult.contains("EXIT_CODE_IS_0_HERE");
+        log.append("8️⃣ cp -r ĐÈ LẦN 2 lên thư mục đã có file → ").append(cpOverwriteOk ? "✅ exit 0" : "❌ " + cpOverwriteResult).append("\n\n");
+
+        // Dọn dẹp
+        runShell("rm -rf \"" + testBase + "\"");
+
+        dismissAndShowDebug(log.toString());
+    }
+
+    private void dismissAndShowDebug(String log) {
+        mainHandler.post(() -> {
+            setButtonsEnabled(true);
+            showProgress(false);
+            showScrollableDialog("🔧 Debug CP Test", log);
+        });
     }
 
     private void deleteRecursive(File file) {
