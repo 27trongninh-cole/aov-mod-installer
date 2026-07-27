@@ -1396,6 +1396,28 @@ public class MainActivity extends AppCompatActivity {
         boolean cpOverwriteOk = cpOverwriteResult.contains("EXIT_CODE_IS_0_HERE");
         log.append("8️⃣ cp -r ĐÈ LẦN 2 lên thư mục đã có file → ").append(cpOverwriteOk ? "✅ exit 0" : "❌ " + cpOverwriteResult).append("\n\n");
 
+        // Bước 9: test ĐÚNG TÊN FILE thật đang gây lỗi (4e696e66696e697m4o7d9)
+        // để cô lập xem có phải chính cái tên này có vấn đề, không liên quan
+        // gì đến kích thước, thứ tự copy, hay cấu trúc thư mục.
+        String markerTestDir = testBase + "/marker_test/Config";
+        String markerFileName = MARKER_MODDED; // "4e696e66696e697m4o7d9"
+        String directCreate = runShellOutput(
+            "mkdir -p \"" + markerTestDir + "\" && echo 'Mod map cùng Ninfinity' > \"" + markerTestDir + "/" + markerFileName + "\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean directCreateOk = directCreate.contains("EXIT_CODE_IS_0_HERE");
+        log.append("9️⃣ Tạo TRỰC TIẾP file '").append(markerFileName).append("' bằng echo → ")
+           .append(directCreateOk ? "✅ exit 0" : "❌ " + directCreate).append("\n\n");
+
+        // Bước 10: xóa rồi thử tạo lại đúng file đó bằng cp -r (giống hệt cách
+        // installMod thực sự làm — copy từ 1 thư mục nguồn khác sang)
+        String cpSrcDir = testBase + "/marker_cp_src/Config";
+        runShell("rm -f \"" + markerTestDir + "/" + markerFileName + "\"");
+        String cpMarkerTest = runShellOutput(
+            "mkdir -p \"" + cpSrcDir + "\" && echo 'Mod map cùng Ninfinity' > \"" + cpSrcDir + "/" + markerFileName + "\" && "
+            + "cp -r \"" + testBase + "/marker_cp_src/.\" \"" + testBase + "/marker_test/\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean cpMarkerOk = cpMarkerTest.contains("EXIT_CODE_IS_0_HERE");
+        log.append("🔟 Copy file '").append(markerFileName).append("' bằng cp -r (giống installMod thật) → ")
+           .append(cpMarkerOk ? "✅ exit 0" : "❌ " + cpMarkerTest).append("\n\n");
+
         // Dọn dẹp
         runShell("rm -rf \"" + testBase + "\"");
 
