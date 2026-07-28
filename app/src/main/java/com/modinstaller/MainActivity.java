@@ -1418,6 +1418,33 @@ public class MainActivity extends AppCompatActivity {
         log.append("🔟 Copy file '").append(markerFileName).append("' bằng cp -r (giống installMod thật) → ")
            .append(cpMarkerOk ? "✅ exit 0" : "❌ " + cpMarkerTest).append("\n\n");
 
+        // Bước 11: tái hiện CHÍNH XÁC cấu trúc 2 file của AOV_MapMod_lv1_1.62.1.zip
+        // — cùng thứ tự (assetbundle/scene/... trước, Config/marker sau), copy
+        // bằng 1 lệnh cp -r DUY NHẤT chứa cả 2 file (giống hệt cách installMod
+        // thật gọi), thay vì tạo từng file riêng lẻ như bước 9-10.
+        String realSrcDir = testBase + "/real_replica_src";
+        String realDstDir = testBase + "/real_replica_dst";
+        String buildReplica =
+            "mkdir -p \"" + realSrcDir + "/1.62.1/assetbundle/scene\" && "
+            + "mkdir -p \"" + realSrcDir + "/1.62.1/Config\" && "
+            + "dd if=/dev/zero of=\"" + realSrcDir + "/1.62.1/assetbundle/scene/scene_artist_5v5_v4_lv1_raw.assetbundle\" bs=1024 count=3524 2>&1 && "
+            + "echo 'Mod map cùng Ninfinity' > \"" + realSrcDir + "/1.62.1/Config/" + markerFileName + "\" && "
+            + "echo BUILD_OK";
+        String buildResult = runShellOutput(buildReplica);
+        log.append("1️⃣1️⃣a. Tạo cấu trúc giả lập y hệt (thư mục + file lớn 3.6MB + marker) → ")
+           .append(buildResult.contains("BUILD_OK") ? "✅ OK" : "❌ " + buildResult).append("\n\n");
+
+        String replicaCopy = runShellOutput(
+            "mkdir -p \"" + realDstDir + "\" && cp -r \"" + realSrcDir + "/.\" \"" + realDstDir + "/\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
+        boolean replicaCopyOk = replicaCopy.contains("EXIT_CODE_IS_0_HERE");
+        log.append("1️⃣1️⃣b. cp -r TOÀN BỘ cấu trúc (1 lệnh, giống installMod thật) → ")
+           .append(replicaCopyOk ? "✅ exit 0" : "❌ " + replicaCopy).append("\n\n");
+
+        String checkMarkerInDst = runShellOutput(
+            "[ -f \"" + realDstDir + "/1.62.1/Config/" + markerFileName + "\" ] && echo EXISTS || echo MISSING");
+        log.append("1️⃣1️⃣c. File marker có ở đích sau copy → ")
+           .append(checkMarkerInDst.contains("EXISTS") ? "✅ CÓ" : "❌ KHÔNG (" + checkMarkerInDst + ")").append("\n\n");
+
         // Dọn dẹp
         runShell("rm -rf \"" + testBase + "\"");
 
