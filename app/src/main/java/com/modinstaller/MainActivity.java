@@ -1211,6 +1211,13 @@ public class MainActivity extends AppCompatActivity {
 
         updateProgressDialog("Đang cài mod vào game...", 80);
 
+        // Debug: xem permission/owner THẬT của các file do Zip4j (Java) tạo ra
+        // trong sourceDir — so sánh với permission khi rish tự tạo file bằng
+        // mkdir/echo (trong debug test), vì đây là điểm khác biệt duy nhất
+        // chưa kiểm chứng giữa test giả lập (luôn pass) và tình huống thật
+        // (luôn fail).
+        String lsBeforeCp = runShellOutput("ls -laR \"" + sourceDir.getAbsolutePath() + "\" 2>&1 | tail -c 2500");
+
         // Ghi log cp ra file riêng (thay vì chỉ dựa vào output buffer của
         // runShellOutput, có thể bị giới hạn) — đọc lại toàn bộ log thật sau
         // đó để không bỏ sót lỗi cụ thể nào.
@@ -1258,6 +1265,7 @@ public class MainActivity extends AppCompatActivity {
         debugInfo.append("📊 Số file THỰC TẾ ở đích (toàn bộ Resources): ").append(targetCountOutput.trim()).append("\n");
         debugInfo.append("💾 Dung lượng trống còn lại: ").append(freeSpaceMB).append(" MB\n");
         debugInfo.append("🎯 Đích: ").append(targetPath).append("\n");
+        debugInfo.append("🔎 ls -laR NGUỒN (permission thật do Zip4j tạo, trước khi cp):\n").append(lsBeforeCp.isEmpty() ? "(trống)" : lsBeforeCp).append("\n\n");
         debugInfo.append("⚙️ Lệnh cp exit code 0: ").append(copied ? "CÓ" : "KHÔNG").append("\n");
         debugInfo.append("📝 Log cp (40 dòng cuối):\n").append(cpOutput.isEmpty() ? "(trống)" : cpOutput).append("\n");
         if (sampleRelativePath != null) {
