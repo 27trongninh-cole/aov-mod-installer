@@ -819,30 +819,13 @@ public class MainActivity extends AppCompatActivity {
             }
 
             String configPath = RESOURCES_PATH + "/" + currentGameVersion + "/Config";
-            String moddedPath = configPath + "/" + MARKER_MODDED;
             String fixedPath = configPath + "/" + MARKER_FIXED;
 
-            // Gộp thành 1 lệnh duy nhất: check modded trước, fallback fixed, tránh gọi rish nhiều lần
-            String combinedCmd =
-                "if [ -e \"" + moddedPath + "\" ]; then " +
-                "  echo MODDED; cat \"" + moddedPath + "\" 2>/dev/null; " +
-                "elif [ -e \"" + fixedPath + "\" ]; then " +
-                "  echo FIXED; " +
-                "else " +
-                "  echo NONE; " +
-                "fi";
-
-            String output = runShellOutput(combinedCmd);
-            String[] lines = output.split("\n", 2);
-            String state = lines.length > 0 ? lines[0].trim() : "NONE";
-            String moddedName = lines.length > 1 ? lines[1].trim() : "";
+            boolean isFixed = fileExists(fixedPath);
 
             String status;
             int color;
-            if ("MODDED".equals(state)) {
-                status = "🎨 Đã mod: " + (moddedName.isEmpty() ? "(không rõ tên)" : moddedName);
-                color = 0xFFE94560;
-            } else if ("FIXED".equals(state)) {
+            if (isFixed) {
                 status = "✅ Đã Fix";
                 color = 0xFF00CC66;
             } else {
