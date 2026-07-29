@@ -934,6 +934,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
+            fixPermissionsRecursively(extractTmpDir);
             updateProgressDialog("Đang copy vào game...", 75);
             // rish chỉ làm nhiệm vụ copy file đã giải nén sẵn vào Android/data/
             boolean copied = runShell("mkdir -p \"" + DATA_PATH + "\" && cp -r \"" + extractTmpDir.getAbsolutePath() + "/.\" \"" + DATA_PATH + "/\"");
@@ -1010,6 +1011,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
+            fixPermissionsRecursively(extractTmpDir);
             finishInstallModFromExtractedDir(extractTmpDir, tmpZip);
 
         } catch (Exception e) {
@@ -1133,6 +1135,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
+            fixPermissionsRecursively(extractTmpDir);
             finishInstallModFromExtractedDir(extractTmpDir, tmpZip);
 
         } catch (Exception e) {
@@ -1311,14 +1314,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Duyệt đệ quy cây thư mục đã giải nén, tìm thư mục tên "Resources"
-    // ở bất kỳ độ sâu nào. Trả về chính thư mục đó (không phải thư mục cha).
+    // (không phân biệt hoa/thường) ở bất kỳ độ sâu nào. Trả về chính thư
+    // mục đó (không phải thư mục cha).
     private File locateResourcesRoot(File dir) {
         if (dir == null || !dir.isDirectory()) return null;
         File[] children = dir.listFiles();
         if (children == null) return null;
 
         for (File child : children) {
-            if (child.isDirectory() && child.getName().equals("Resources")) {
+            if (child.isDirectory() && child.getName().equalsIgnoreCase("Resources")) {
                 return child;
             }
         }
@@ -1448,6 +1452,24 @@ public class MainActivity extends AppCompatActivity {
             showProgress(false);
             showScrollableDialog("🔧 Debug CP Test", log);
         });
+    }
+
+    // zip4j giữ nguyên permission gốc lưu trong file zip (khác java.util.zip
+    // trước đây luôn tạo file mới với permission mặc định của app). Nếu zip
+    // được nén với permission chặt, tiến trình shell chạy qua rish/Shizuku
+    // (UID khác app) có thể không đọc được -> reset về quyền đọc/ghi/execute
+    // đầy đủ ngay sau khi giải nén, trước khi cp.
+    private void fixPermissionsRecursively(File root) {
+        if (root == null || !root.exists()) return;
+        root.setReadable(true, false);
+        root.setExecutable(true, false);
+        root.setWritable(true, false);
+        if (root.isDirectory()) {
+            File[] children = root.listFiles();
+            if (children != null) {
+                for (File c : children) fixPermissionsRecursively(c);
+            }
+        }
     }
 
     private void deleteRecursive(File file) {
