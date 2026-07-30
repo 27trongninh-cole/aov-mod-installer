@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#1a1a2e"
+    android:background="#1a1a2e">
+
+<ScrollView
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
     android:fillViewport="true">
 
     <LinearLayout
@@ -567,3 +571,24 @@
 
     </LinearLayout>
 </ScrollView>
+
+    <!-- Nút hướng dẫn (product tour / spotlight) — cố định góc dưới trái,
+         không cuộn theo nội dung vì nằm ngoài ScrollView, trong FrameLayout gốc -->
+    <TextView
+        android:id="@+id/btn_help_tour"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:text="?"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#ffffff"
+        android:gravity="center"
+        android:background="@drawable/circle_help_button"
+        android:foreground="?attr/selectableItemBackgroundBorderless"
+        android:elevation="6dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+</FrameLayout>

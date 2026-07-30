@@ -176,6 +176,12 @@ public class MainActivity extends AppCompatActivity {
         checkShizukuAndInit();
         checkAnnouncement();
 
+        // Nút hướng dẫn (product tour / spotlight) — luôn có thể mở lại bất cứ lúc nào
+        View btnHelpTour = findViewById(R.id.btn_help_tour);
+        if (btnHelpTour != null) {
+            btnHelpTour.setOnClickListener(v -> startAppTour());
+        }
+
         // Debug ẩn: long-press vào dòng "Phiên bản game" để chạy chuỗi lệnh
         // test cp/rish, giúp chẩn đoán lỗi permission mà không cần Termux.
         if (tvGameVersion != null) {
@@ -1925,6 +1931,31 @@ public class MainActivity extends AppCompatActivity {
         // chồng lên nhau. Giữ nguyên method + toàn bộ chỗ gọi cũ (không phải sửa
         // từng nơi rải rác khắp file), chỉ cho nó luôn ẩn đi để không còn hiện nữa.
         mainHandler.post(() -> progressBar.setVisibility(View.GONE));
+    }
+
+    // ─── Product tour (spotlight/coach-mark) ──────────────────────
+
+    private void startAppTour() {
+        new TourManager(this)
+            .addStep(tvShizukuLabel,
+                "Trạng thái Shizuku",
+                "Chấm xanh nghĩa là Shizuku đang chạy và đã cấp quyền — cần thiết để app thao tác được với file game.")
+            .addStep(tvResourcesStatus,
+                "Trạng thái Resources",
+                "Cho biết Resources trên máy đã được Fix hay chưa, dựa trên đúng phiên bản game hiện tại.")
+            .addStep(btnFixResources,
+                "🔧 Fix Resources",
+                "Bấm vào đây đầu tiên để tải và cài Resources cần thiết từ server — bắt buộc phải làm trước khi cài Mod.")
+            .addStep(btnInstallMod,
+                "📦 Cài file Mod",
+                "Sau khi đã Fix Resources, dùng nút này để chọn file .zip mod muốn cài vào game.")
+            .addStep(btnRemoveMod,
+                "🗑️ Xóa tất cả Mod",
+                "Khôi phục lại Resources gốc, gỡ bỏ toàn bộ mod đã cài trước đó.")
+            .addStep(findViewById(R.id.btn_tool_map),
+                "🗺️ Map Texture Tool",
+                "Công cụ riêng để tự tạo mod thay thế texture bản đồ.")
+            .start();
     }
 
     @Override

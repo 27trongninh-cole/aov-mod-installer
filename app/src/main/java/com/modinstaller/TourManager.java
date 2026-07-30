@@ -1,0 +1,227 @@
+package com.modinstaller;
+
+import android.app.Activity;
+import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.util.ArrayList;
+import java.util.List;
+
+// Quản lý "product tour" kiểu spotlight/coach-mark: phủ nền tối toàn màn hình
+// (SpotlightOverlayView), đục 1 vùng sáng đúng phần tử đang giới thiệu, kèm
+// tooltip giải thích + nút "Tiếp →"/"Bỏ qua", đi qua từng bước tuần tự.
+public class TourManager {
+
+    private static class Step {
+        final View targetView;
+        final String title;
+        final String description;
+
+        Step(View targetView, String title, String description) {
+            this.targetView = targetView;
+            this.title = title;
+            this.description = description;
+        }
+    }
+
+    private final Activity activity;
+    private final List<Step> steps = new ArrayList<>();
+    private int currentIndex = 0;
+
+    private ViewGroup rootContainer;
+    private SpotlightOverlayView spotlightView;
+    private LinearLayout tooltipView;
+    private TextView tvStepCount;
+    private TextView tvTitle;
+    private TextView tvDescription;
+    private TextView btnNext;
+
+    private Runnable onFinishedListener;
+
+    public TourManager(Activity activity) {
+        this.activity = activity;
+    }
+
+    public TourManager addStep(View targetView, String title, String description) {
+        if (targetView != null) {
+            steps.add(new Step(targetView, title, description));
+        }
+        return this;
+    }
+
+    public void setOnFinishedListener(Runnable listener) {
+        this.onFinishedListener = listener;
+    }
+
+    public void start() {
+        if (steps.isEmpty()) return;
+        currentIndex = 0;
+        buildOverlay();
+        showStep(currentIndex);
+    }
+
+    // ─── Dựng overlay + tooltip ────────────────────────────────────
+
+    private void buildOverlay() {
+        rootContainer = activity.findViewById(android.R.id.content);
+
+        spotlightView = new SpotlightOverlayView(activity);
+        spotlightView.setLayoutParams(new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootContainer.addView(spotlightView);
+
+        tooltipView = buildTooltipView();
+        rootContainer.addView(tooltipView);
+    }
+
+    private LinearLayout buildTooltipView() {
+        float density = activity.getResources().getDisplayMetrics().density;
+        int pad = (int) (16 * density);
+
+        LinearLayout container = new LinearLayout(activity);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(pad, pad, pad, pad);
+        container.setBackground(makeRoundedBackground(density));
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = (int) (20 * density);
+        lp.rightMargin = (int) (20 * density);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        container.setLayoutParams(lp);
+
+        tvStepCount = new TextView(activity);
+        tvStepCount.setTextColor(0xFF888888);
+        tvStepCount.setTextSize(11);
+        container.addView(tvStepCount);
+
+        tvTitle = new TextView(activity);
+        tvTitle.setTextColor(0xFFe94560);
+        tvTitle.setTextSize(16);
+        tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleLp.topMargin = (int) (4 * density);
+        tvTitle.setLayoutParams(titleLp);
+        container.addView(tvTitle);
+
+        tvDescription = new TextView(activity);
+        tvDescription.setTextColor(0xFFffffff);
+        tvDescription.setTextSize(14);
+        LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        descLp.topMargin = (int) (8 * density);
+        tvDescription.setLayoutParams(descLp);
+        container.addView(tvDescription);
+
+        LinearLayout buttonRow = new LinearLayout(activity);
+        buttonRow.setOrientation(LinearLayout.HORIZONTAL);
+        buttonRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = (int) (16 * density);
+        buttonRow.setLayoutParams(rowLp);
+
+        TextView btnSkip = new TextView(activity);
+        btnSkip.setText("Bỏ qua");
+        btnSkip.setTextColor(0xFF888888);
+        btnSkip.setPadding(pad, pad / 2, pad, pad / 2);
+        btnSkip.setClickable(true);
+        btnSkip.setFocusable(true);
+        btnSkip.setOnClickListener(v -> finish());
+        buttonRow.addView(btnSkip);
+
+        btnNext = new TextView(activity);
+        btnNext.setTextColor(0xFFe94560);
+        btnNext.setTypeface(Typeface.DEFAULT_BOLD);
+        btnNext.setPadding(pad, pad / 2, pad, pad / 2);
+        btnNext.setClickable(true);
+        btnNext.setFocusable(true);
+        btnNext.setOnClickListener(v -> next());
+        buttonRow.addView(btnNext);
+
+        container.addView(buttonRow);
+        return container;
+    }
+
+    private GradientDrawable makeRoundedBackground(float density) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF16213e);
+        bg.setCornerRadius(14 * density);
+        bg.setStroke((int) density, 0xFF0f3460);
+        return bg;
+    }
+
+    // ─── Điều hướng từng bước ──────────────────────────────────────
+
+    private void next() {
+        currentIndex++;
+        if (currentIndex >= steps.size()) {
+            finish();
+        } else {
+            showStep(currentIndex);
+        }
+    }
+
+    private void finish() {
+        if (rootContainer == null) return;
+        rootContainer.removeView(spotlightView);
+        rootContainer.removeView(tooltipView);
+        if (onFinishedListener != null) onFinishedListener.run();
+    }
+
+    private void showStep(int index) {
+        Step step = steps.get(index);
+        View target = step.targetView;
+
+        // post() để đợi layout ổn định, đảm bảo target đã có toạ độ thật trên màn hình
+        target.post(() -> {
+            float density = activity.getResources().getDisplayMetrics().density;
+            float padding = 8 * density;
+
+            int[] location = new int[2];
+            target.getLocationInWindow(location);
+
+            RectF rect = new RectF(
+                location[0] - padding,
+                location[1] - padding,
+                location[0] + target.getWidth() + padding,
+                location[1] + target.getHeight() + padding);
+
+            spotlightView.setSpotlightRect(rect, 16 * density);
+
+            tvStepCount.setText("Bước " + (index + 1) + "/" + steps.size());
+            tvTitle.setText(step.title);
+            tvDescription.setText(step.description);
+            btnNext.setText(index == steps.size() - 1 ? "Xong ✓" : "Tiếp →");
+
+            positionTooltip(rect, density);
+        });
+    }
+
+    // Đặt tooltip ngay dưới spotlight nếu đủ chỗ, ngược lại đặt lên trên
+    private void positionTooltip(RectF spotlightRect, float density) {
+        tooltipView.post(() -> {
+            int screenHeight = rootContainer.getHeight();
+            int tooltipHeight = tooltipView.getHeight();
+
+            float spaceBelow = screenHeight - spotlightRect.bottom;
+            float spaceAbove = spotlightRect.top;
+
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) tooltipView.getLayoutParams();
+            if (spaceBelow >= tooltipHeight + 24 * density || spaceBelow >= spaceAbove) {
+                lp.topMargin = (int) (spotlightRect.bottom + 16 * density);
+            } else {
+                lp.topMargin = (int) Math.max(24 * density, spotlightRect.top - tooltipHeight - 16 * density);
+            }
+            tooltipView.setLayoutParams(lp);
+        });
+    }
+}
