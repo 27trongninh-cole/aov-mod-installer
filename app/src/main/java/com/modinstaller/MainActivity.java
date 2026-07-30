@@ -50,6 +50,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int STORAGE_PERMISSION_CODE = 101;
     private boolean isLegacyMode = false; // Android <= 10: dùng File API thường
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
+    private static final String ANNOUNCEMENT_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/announcement.txt";
+    private static final String PREF_ANNOUNCEMENT_DISMISSED_HASH = "announcement_dismissed_hash";
     private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
     private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
@@ -172,6 +174,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         checkShizukuAndInit();
+        checkAnnouncement();
 
         // Debug ẩn: long-press vào dòng "Phiên bản game" để chạy chuỗi lệnh
         // test cp/rish, giúp chẩn đoán lỗi permission mà không cần Termux.
@@ -851,6 +854,87 @@ public class MainActivity extends AppCompatActivity {
             showDialog("🚧 Đang bảo trì",
                 detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!");
         }
+    }
+
+    // ─── Thông báo (announcement) ─────────────────────────────────
+
+    private void checkAnnouncement() {
+        executor.execute(() -> {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL(ANNOUNCEMENT_URL).openConnection();
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line).append("\n");
+                reader.close();
+                String content = sb.toString().trim();
+                if (content.isEmpty()) return; // chưa có thông báo nào → bỏ qua
+
+                String contentHash = md5OfString(content);
+                String dismissedHash = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+                    .getString(PREF_ANNOUNCEMENT_DISMISSED_HASH, "");
+
+                // Nếu người dùng đã tick "Không hiển thị lại" cho ĐÚNG nội dung này rồi
+                // thì bỏ qua. Nếu nội dung file đổi (hash đổi theo) → tự động hiện lại.
+                if (contentHash.equals(dismissedHash)) return;
+
+                mainHandler.post(() -> showAnnouncementDialog(content, contentHash));
+            } catch (Exception ignored) {
+                // Không có mạng / chưa có file thông báo trên repo → im lặng bỏ qua
+            }
+        });
+    }
+
+    private String md5OfString(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(input.getBytes("UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void showAnnouncementDialog(String content, String contentHash) {
+        android.widget.LinearLayout container = new android.widget.LinearLayout(this);
+        container.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        container.setPadding(pad, pad, pad, pad);
+
+        TextView tvMessage = new TextView(this);
+        tvMessage.setText(content);
+        tvMessage.setTextSize(15);
+        tvMessage.setTextColor(0xFFffffff);
+        container.addView(tvMessage);
+
+        android.widget.CheckBox cbDontShow = new android.widget.CheckBox(this);
+        cbDontShow.setText("Không hiển thị lại");
+        cbDontShow.setTextColor(0xFFaaaaaa);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        cbDontShow.setLayoutParams(lp);
+        container.addView(cbDontShow);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("📢 Thông báo")
+            .setView(container)
+            .setPositiveButton("Đóng", (d, w) -> {
+                if (cbDontShow.isChecked()) {
+                    getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                        .putString(PREF_ANNOUNCEMENT_DISMISSED_HASH, contentHash)
+                        .apply();
+                }
+            })
+            .setCancelable(true)
+            .create();
+        styleDialog(dialog);
+        dialog.show();
     }
 
     // ─── Config ──────────────────────────────────────────────────
@@ -1836,7 +1920,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showProgress(boolean show) {
-        mainHandler.post(() -> progressBar.setVisibility(show ? View.VISIBLE : View.GONE));
+        // Đã có progress dialog riêng (bánh răng xoay + % + thông báo) lo đủ rồi —
+        // ProgressBar tròn mặc định này bị thừa và gây hiện tượng 2 vòng loading
+        // chồng lên nhau. Giữ nguyên method + toàn bộ chỗ gọi cũ (không phải sửa
+        // từng nơi rải rác khắp file), chỉ cho nó luôn ẩn đi để không còn hiện nữa.
+        mainHandler.post(() -> progressBar.setVisibility(View.GONE));
     }
 
     @Override
