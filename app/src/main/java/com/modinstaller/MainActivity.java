@@ -58,6 +58,9 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_GAME_VERSION = "game_version";
     private static final String MARKER_FIXED = "4fei6x96e66696e697479";
     private static final String MARKER_MODDED = "4e696e66696e697m4o7d9";
+    private static final String VERSION_FILE_NAME = "version.txt";
+    private static final String PREF_RESOURCES_VERSION_TXT = "resources_version_txt";
+    private static final String PREF_RESOURCES_VERSION_FOLDER = "resources_version_folder";
 
     private TextView tvShizukuStatus;
     private TextView tvShizukuLabel;
@@ -77,6 +80,15 @@ public class MainActivity extends AppCompatActivity {
     private String resourcesUrl = null;
     private String resourcesHash = null;
     private String gameVersion = "";
+    // Nội dung version.txt lấy từ gói Resources đã tải về (vd "1.63.1.10|1716331"),
+    // dùng để đối chiếu CHÍNH XÁC với version.txt trong thư mục Resources trên máy
+    // — thay vì chỉ dựa vào tên thư mục (dễ sai khi có nhiều thư mục version tồn tại song song).
+    private String resourcesVersionTxt = "";
+    // Tên thư mục version bên trong gói Resources đã tải (vd "1.63.1"), lấy trực tiếp
+    // từ cấu trúc file giải nén — không suy ra từ config.json để tránh lệch nhau.
+    private String resourcesVersionFolder = "";
+    // Thư mục version trên máy hiện khớp với resourcesVersionTxt (null nếu chưa xác định/không khớp)
+    private volatile String activeVersionFolder = null;
     private File rishFile = null;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -175,8 +187,10 @@ public class MainActivity extends AppCompatActivity {
 
         // Load gameVersion đã lưu → hiện tạm ngay (không query trạng thái để tránh race
         // với checkMaintenanceMode/updateResourcesStatus chạy sau khi fetch config xong)
-        gameVersion = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
-            .getString(PREF_GAME_VERSION, "");
+        SharedPreferences prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE);
+        gameVersion = prefs.getString(PREF_GAME_VERSION, "");
+        resourcesVersionTxt = prefs.getString(PREF_RESOURCES_VERSION_TXT, "");
+        resourcesVersionFolder = prefs.getString(PREF_RESOURCES_VERSION_FOLDER, "");
         if (!gameVersion.isEmpty() && tvGameVersion != null) {
             tvGameVersion.setText(gameVersion);
         }
@@ -397,6 +411,32 @@ public class MainActivity extends AppCompatActivity {
                 progressDialog = null;
             }
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // BUG CŨ: checkShizukuAndInit() chỉ chạy 1 lần ở onCreate, nên nếu người dùng
+        // rời app để mở Shizuku và bấm Stop, hoặc Shizuku tự thu hồi quyền của app (ví dụ
+        // sau khi Shizuku service bị hệ thống kill và khởi động lại), badge trạng thái vẫn
+        // hiển thị "Sẵn sàng" cũ cho tới khi mở lại app từ đầu (onCreate mới chạy lại).
+        // → Re-check lại mỗi lần app quay lại foreground để badge luôn phản ánh đúng
+        // trạng thái thực tế ngay lúc này.
+        refreshShizukuStatus();
+    }
+
+    // Kiểm tra lại trạng thái Shizuku hiện tại (không tự động request quyền, không
+    // hiện dialog) — chỉ dùng để cập nhật badge hiển thị mỗi khi app resume.
+    private void refreshShizukuStatus() {
+        if (isLegacyMode) {
+            boolean granted = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+            updateShizukuStatus(granted);
+            return;
+        }
+        boolean ready = Shizuku.pingBinder()
+            && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
+        updateShizukuStatus(ready);
     }
 
     // ─── Shizuku ────────────────────────────────────────────────
@@ -723,47 +763,93 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Quét Resources/<version>/version.txt trong gói VỪA GIẢI NÉN (tải từ server)
+    // để lấy nội dung version.txt chính xác (vd "1.63.1.10|1716331") cùng tên thư
+    // mục version tương ứng — dùng làm CHUẨN đối chiếu về sau, thay vì đoán qua
+    // tên thư mục liệt kê được trên máy (có thể có nhiều thư mục version cũ/mới
+    // tồn tại song song cùng lúc, gây báo nhầm bảo trì).
+    private String[] findVersionTxtInExtractedPackage(File extractRoot) {
+        File resourcesDir = new File(extractRoot, "Resources");
+        if (!resourcesDir.isDirectory()) return null;
+        File[] children = resourcesDir.listFiles();
+        if (children == null) return null;
+        for (File child : children) {
+            if (!child.isDirectory()) continue;
+            File versionFile = new File(child, VERSION_FILE_NAME);
+            if (versionFile.exists()) {
+                try {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(versionFile.toPath());
+                    String content = new String(bytes, "UTF-8").trim();
+                    if (!content.isEmpty()) {
+                        return new String[]{child.getName(), content};
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    // Lấy phần hiển thị ngắn gọn từ nội dung version.txt (vd "1.63.1.10|1716331" -> "1.63.1.10")
+    private String parseShortVersion(String versionTxtContent) {
+        if (versionTxtContent == null) return "";
+        int pipeIndex = versionTxtContent.indexOf('|');
+        return pipeIndex >= 0 ? versionTxtContent.substring(0, pipeIndex) : versionTxtContent;
+    }
+
     // ─── Maintenance Mode ───────────────────────────────────────
 
     private void checkMaintenanceMode() {
         executor.execute(() -> {
-            if (gameVersion.isEmpty()) return;
+            // Chưa từng Fix Resources thành công lần nào nên chưa có version.txt
+            // chuẩn để đối chiếu → không đủ căn cứ để báo bảo trì.
+            if (resourcesVersionTxt.isEmpty()) {
+                activeVersionFolder = !resourcesVersionFolder.isEmpty() ? resourcesVersionFolder : null;
+                mainHandler.post(() -> setMaintenanceUI(false, ""));
+                updateResourcesStatus();
+                return;
+            }
 
-            String rawOutput = runShellOutput(
-                "ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
-
-            // Lọc bỏ các dòng debug/lỗi, chỉ lấy dòng trông giống version (chứa dấu chấm)
-            String actualVersion = "";
+            // Liệt kê TẤT CẢ thư mục version có trong Resources trên máy — có thể có
+            // nhiều thư mục tồn tại song song (vd game vừa cập nhật lên bản mới nhưng
+            // thư mục version cũ chưa kịp bị dọn dẹp). Đối chiếu version.txt BÊN TRONG
+            // từng thư mục (không phải tên thư mục) để tìm đúng bản khớp với Resources
+            // đã Fix — tránh báo nhầm bảo trì khi vẫn còn 1 thư mục đúng nằm cạnh thư
+            // mục khác.
+            String rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
+            String matchedFolder = null;
             for (String l : rawOutput.split("\n")) {
-                String trimmed = l.trim();
-                if (trimmed.isEmpty()) continue;
-                // Dòng version phải có dạng số.số.số (vd: 1.63.1)
-                if (trimmed.matches("\\d+\\.\\d+.*")) {
-                    actualVersion = trimmed;
+                String folderName = l.trim();
+                if (folderName.isEmpty() || !folderName.matches("\\d+\\.\\d+.*")) continue;
+                String content = runShellOutput(
+                    "cat \"" + RESOURCES_PATH + "/" + folderName + "/" + VERSION_FILE_NAME + "\" 2>/dev/null").trim();
+                if (!content.isEmpty() && content.equals(resourcesVersionTxt)) {
+                    matchedFolder = folderName;
                     break;
                 }
             }
 
-            boolean isMaintenance = !actualVersion.isEmpty()
-                && !actualVersion.equals(gameVersion);
+            activeVersionFolder = matchedFolder;
+            boolean isMaintenance = (matchedFolder == null);
+            String expectedDisplay = parseShortVersion(resourcesVersionTxt);
 
-            final String finalVersion = actualVersion;
-            mainHandler.post(() -> setMaintenanceUI(isMaintenance, finalVersion));
-            updateResourcesStatus(); // gọi duy nhất 1 lần ở đây sau khi version đã ổn định
+            mainHandler.post(() -> setMaintenanceUI(isMaintenance, expectedDisplay));
+            updateResourcesStatus();
         });
     }
 
-    private void setMaintenanceUI(boolean maintenance, String actualVersion) {
+    private void setMaintenanceUI(boolean maintenance, String expectedVersion) {
         setButtonsEnabled(!maintenance);
         if (maintenance) {
             if (tvResourcesStatus != null) {
                 tvResourcesStatus.setText("🚧 Bảo trì");
                 tvResourcesStatus.setTextColor(0xFFFFAA00);
             }
+            String detail = expectedVersion.isEmpty()
+                ? "Không tìm thấy phiên bản Resources phù hợp trong dữ liệu game hiện tại."
+                : "Dữ liệu game hiện tại không khớp với bản Resources đã Fix (" + expectedVersion + ").";
             showDialog("🚧 Đang bảo trì",
-                "Game đã cập nhật lên phiên bản " + actualVersion
-                + " nhưng Resources trên server vẫn đang ở bản " + gameVersion
-                + ".\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!");
+                detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!");
         }
     }
 
@@ -807,8 +893,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateResourcesStatus() {
         executor.execute(() -> {
-            String currentGameVersion = gameVersion; // snapshot để tránh race condition
-            if (currentGameVersion.isEmpty()) {
+            String folder = activeVersionFolder; // snapshot để tránh race condition
+            if (folder == null || folder.isEmpty()) {
                 mainHandler.post(() -> {
                     if (tvResourcesStatus != null) {
                         tvResourcesStatus.setText("❓ Chưa rõ");
@@ -818,7 +904,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            String configPath = RESOURCES_PATH + "/" + currentGameVersion + "/Config";
+            String configPath = RESOURCES_PATH + "/" + folder + "/Config";
             String fixedPath = configPath + "/" + MARKER_FIXED;
 
             boolean isFixed = fileExists(fixedPath);
@@ -935,6 +1021,21 @@ public class MainActivity extends AppCompatActivity {
             }
 
             fixPermissionsRecursively(extractTmpDir);
+
+            // Đọc version.txt chính xác từ gói Resources VỪA giải nén — dùng làm
+            // chuẩn đối chiếu chính xác cho các lần check version/bảo trì về sau,
+            // và cũng dùng chính tên thư mục này (không phải gameVersion từ config.json)
+            // để tạo marker "đã Fix", tránh lệch nếu 2 giá trị này không khớp nhau.
+            String[] versionInfo = findVersionTxtInExtractedPackage(extractTmpDir);
+            if (versionInfo != null) {
+                resourcesVersionFolder = versionInfo[0];
+                resourcesVersionTxt = versionInfo[1];
+                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                    .putString(PREF_RESOURCES_VERSION_FOLDER, resourcesVersionFolder)
+                    .putString(PREF_RESOURCES_VERSION_TXT, resourcesVersionTxt)
+                    .apply();
+            }
+
             updateProgressDialog("Đang copy vào game...", 75);
             // rish chỉ làm nhiệm vụ copy file đã giải nén sẵn vào Android/data/
             boolean copied = runShell("mkdir -p \"" + DATA_PATH + "\" && cp -r \"" + extractTmpDir.getAbsolutePath() + "/.\" \"" + DATA_PATH + "/\"");
@@ -942,9 +1043,13 @@ public class MainActivity extends AppCompatActivity {
             updateProgressDialog("Dọn dẹp...", 90);
             deleteRecursive(extractTmpDir);
 
-            // Tự tạo file marker "fixed"
+            // Tự tạo file marker "fixed" — dùng tên thư mục lấy được từ chính gói
+            // Resources (versionInfo), fallback về gameVersion nếu vì lý do gì đó
+            // không đọc được version.txt trong gói.
             if (copied) {
-                String configPath = RESOURCES_PATH + "/" + gameVersion + "/Config";
+                String versionFolderForMarker = !resourcesVersionFolder.isEmpty()
+                    ? resourcesVersionFolder : gameVersion;
+                String configPath = RESOURCES_PATH + "/" + versionFolderForMarker + "/Config";
                 runShell("mkdir -p \"" + configPath + "\" && rm -f \"" + configPath + "/" + MARKER_MODDED + "\" && touch \"" + configPath + "/" + MARKER_FIXED + "\"");
             }
 
@@ -952,7 +1057,10 @@ public class MainActivity extends AppCompatActivity {
             dismissProgressDialog();
 
             if (copied) {
-                updateResourcesStatus();
+                // Gọi lại checkMaintenanceMode() thay vì chỉ updateResourcesStatus() để
+                // activeVersionFolder được xác định lại ngay với resourcesVersionTxt vừa
+                // cập nhật ở trên (đặc biệt quan trọng cho lần Fix Resources đầu tiên).
+                checkMaintenanceMode();
                 showDialog("Thành công ✅", "Fix Resources thành công! Khởi động lại game để thấy thay đổi.");
             } else {
                 showDialog("Lỗi", "Copy Resources thất bại. Thử lại.");
