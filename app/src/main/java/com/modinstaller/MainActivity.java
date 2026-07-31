@@ -5,12 +5,16 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Typeface;
 import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Spannable;
+import android.text.SpannableStringBuilder;
+import android.text.style.StyleSpan;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ProgressBar;
@@ -779,7 +783,14 @@ public class MainActivity extends AppCompatActivity {
     // tồn tại song song cùng lúc, gây báo nhầm bảo trì).
     private String[] findVersionTxtInExtractedPackage(File extractRoot) {
         File resourcesDir = new File(extractRoot, "Resources");
-        if (!resourcesDir.isDirectory()) return null;
+        return findVersionTxtInResourcesFolder(resourcesDir);
+    }
+
+    // Như trên, nhưng nhận thẳng thư mục Resources làm tham số (dùng cho file
+    // Mod, vì locateResourcesRoot() trả về CHÍNH thư mục Resources đó rồi,
+    // không có thêm 1 lớp "Resources/" bọc ngoài như gói tải từ server).
+    private String[] findVersionTxtInResourcesFolder(File resourcesDir) {
+        if (resourcesDir == null || !resourcesDir.isDirectory()) return null;
         File[] children = resourcesDir.listFiles();
         if (children == null) return null;
         for (File child : children) {
@@ -794,6 +805,21 @@ public class MainActivity extends AppCompatActivity {
                     }
                 } catch (Exception ignored) {
                 }
+            }
+        }
+        return null;
+    }
+
+    // Mod không có version.txt bên trong → chỉ còn cách lấy tên thư mục version
+    // (thư mục con đầu tiên có tên dạng số.số..., vd "1.63.1") để so sánh trực
+    // tiếp tên thư mục với bản Resources đã Fix.
+    private String findVersionFolderName(File resourcesDir) {
+        if (resourcesDir == null || !resourcesDir.isDirectory()) return null;
+        File[] children = resourcesDir.listFiles();
+        if (children == null) return null;
+        for (File child : children) {
+            if (child.isDirectory() && child.getName().matches("\\d+\\.\\d+.*")) {
+                return child.getName();
             }
         }
         return null;
@@ -912,7 +938,7 @@ public class MainActivity extends AppCompatActivity {
         container.setPadding(pad, pad, pad, pad);
 
         TextView tvMessage = new TextView(this);
-        tvMessage.setText(content);
+        tvMessage.setText(parseBoldMarkup(content));
         tvMessage.setTextSize(15);
         tvMessage.setTextColor(0xFFffffff);
         container.addView(tvMessage);
@@ -981,14 +1007,28 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Kiểm tra đồng bộ (dùng trên executor thread) Resources hiện tại đã được
+    // Fix hay chưa — dùng để phân biệt lỗi cài Mod do CHƯA Fix Resources với
+    // lỗi copy thật sự (permission, thiếu dung lượng, v.v).
+    private boolean isCurrentResourcesFixed() {
+        String folder = activeVersionFolder;
+        if (folder == null || folder.isEmpty()) return false;
+        String configPath = RESOURCES_PATH + "/" + folder + "/Config";
+        return fileExists(configPath + "/" + MARKER_FIXED);
+    }
+
     private void updateResourcesStatus() {
         executor.execute(() -> {
             String folder = activeVersionFolder; // snapshot để tránh race condition
             if (folder == null || folder.isEmpty()) {
+                // Không xác định được thư mục version đang hoạt động — thường là do
+                // chưa có quyền đọc version.txt (hoặc chưa từng Fix Resources lần nào)
+                // chứ không hẳn là "trạng thái không xác định". Coi như Chưa Fix để
+                // người dùng biết cần bấm Fix Resources, thay vì mơ hồ.
                 mainHandler.post(() -> {
                     if (tvResourcesStatus != null) {
-                        tvResourcesStatus.setText("❓ Chưa rõ");
-                        tvResourcesStatus.setTextColor(0xFF888888);
+                        tvResourcesStatus.setText("⚠️ Chưa Fix");
+                        tvResourcesStatus.setTextColor(0xFFFFAA00);
                     }
                 });
                 return;
@@ -1354,7 +1394,6 @@ public class MainActivity extends AppCompatActivity {
         updateProgressDialog("Đang xác định vị trí mod...", 55);
 
         File sourceDir = locateResourcesRoot(extractTmpDir);
-        String targetPath;
 
         if (sourceDir == null) {
             dismissProgressDialog();
@@ -1374,9 +1413,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // sourceDir chính là thư mục Resources tìm được → copy thẳng đè lên RESOURCES_PATH
-        targetPath = RESOURCES_PATH;
-
         // Kiểm tra thư mục tìm được có thực sự chứa file không (phòng
         // trường hợp giải nén lỗi giữa chừng khiến thư mục gần như rỗng
         // nhưng vẫn "tồn tại" về mặt kỹ thuật).
@@ -1392,6 +1428,111 @@ public class MainActivity extends AppCompatActivity {
             });
             return;
         }
+
+        // ─── Kiểm tra version mod trước khi cài ────────────────────────
+        // Ưu tiên đối chiếu version LUÔN, không phụ thuộc app có tự biết Resources
+        // đã được Fix hay chưa — vì lệch version thì chắc chắn lỗi không vào được
+        // game dù copy "thành công", trong khi "app chưa ghi nhận đã Fix" chỉ là
+        // app không biết (người dùng có thể đã Fix bằng cách khác ngoài app này).
+        if (isModVersionMismatch(sourceDir)) {
+            dismissProgressDialog();
+            mainHandler.post(() -> showModVersionWarningDialog(sourceDir, extractTmpDir, tmpZip));
+            return;
+        }
+
+        proceedModInstallCopy(sourceDir, extractTmpDir, tmpZip);
+    }
+
+    // Dò trực tiếp trên máy (không phụ thuộc lịch sử Fix Resources qua app) để
+    // lấy version thực tế đang có trong Resources — dùng làm CHUẨN đối chiếu
+    // với mod, vì Resources có thể đã được Fix bằng cách khác mà app không biết.
+    // Trả về {tên thư mục, nội dung version.txt (rỗng nếu máy không có file này)}.
+    private String[] findLiveDeviceVersionInfo() {
+        String rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
+        for (String l : rawOutput.split("\n")) {
+            String folderName = l.trim();
+            if (folderName.isEmpty() || !folderName.matches("\\d+\\.\\d+.*")) continue;
+            String content = runShellOutput(
+                "cat \"" + RESOURCES_PATH + "/" + folderName + "/" + VERSION_FILE_NAME + "\" 2>/dev/null").trim();
+            return new String[]{folderName, content};
+        }
+        return null;
+    }
+
+    // So sánh version của mod (thư mục sourceDir = Resources tìm được trong mod)
+    // với version THẬT đang có trên máy (không phải lịch sử Fix của app).
+    // Ưu tiên đối chiếu version.txt nếu cả 2 bên đều có; nếu không thì fallback
+    // so tên thư mục version trực tiếp.
+    private boolean isModVersionMismatch(File sourceDir) {
+        String[] deviceVersionInfo = findLiveDeviceVersionInfo();
+        if (deviceVersionInfo == null) {
+            // Máy chưa có thư mục version nào trong Resources (chưa Fix lần nào,
+            // kể cả bằng cách khác) → không đủ căn cứ đối chiếu, bỏ qua cảnh báo.
+            return false;
+        }
+        String deviceFolder = deviceVersionInfo[0];
+        String deviceVersionTxt = deviceVersionInfo[1];
+
+        String[] modVersionInfo = findVersionTxtInResourcesFolder(sourceDir);
+        if (modVersionInfo != null && !deviceVersionTxt.isEmpty()) {
+            // Cả 2 bên đều có version.txt → đối chiếu CHÍNH XÁC nội dung
+            return !modVersionInfo[1].equals(deviceVersionTxt);
+        }
+
+        // Thiếu version.txt ở 1 trong 2 bên → fallback so tên thư mục version
+        String modVersionFolder = modVersionInfo != null ? modVersionInfo[0] : findVersionFolderName(sourceDir);
+        return modVersionFolder != null && !modVersionFolder.equals(deviceFolder);
+    }
+
+    // Bảng cảnh báo đầu tiên khi phát hiện mod thuộc phiên bản khác — Dừng cài
+    // (huỷ, dọn dẹp file tạm) hoặc Tiếp tục cài (chuyển sang bảng cảnh báo mạnh hơn).
+    private void showModVersionWarningDialog(File sourceDir, File extractTmpDir, File tmpZip) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("⚠️ Cảnh báo phiên bản")
+            .setMessage(parseBoldMarkup(
+                "File Mod này có vẻ thuộc về /phiên bản game cũ hơn/, hãy sử dụng một File Mod mới hơn để đảm bảo trải nghiệm."))
+            .setCancelable(false)
+            .setNegativeButton("Dừng cài", (d, w) -> cancelModInstall(extractTmpDir, tmpZip))
+            .setPositiveButton("Tiếp tục cài", (d, w) -> showModVersionForceWarningDialog(sourceDir, extractTmpDir, tmpZip))
+            .create();
+        styleDialog(dialog);
+        dialog.show();
+    }
+
+    // Bảng cảnh báo thứ 2, mạnh hơn — hiện sau khi người dùng chọn "Tiếp tục cài"
+    // ở bảng đầu. Dừng (huỷ) hoặc Chấp nhận (tiếp tục copy mod vào game).
+    private void showModVersionForceWarningDialog(File sourceDir, File extractTmpDir, File tmpZip) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("🚨 Xác nhận rủi ro")
+            .setMessage(parseBoldMarkup(
+                "Tiếp tục cài File Mod này có thể khiến /không truy cập được game/ hoặc /lỗi mạng bất định/. Ứng dụng này sẽ không chịu trách nhiệm."))
+            .setCancelable(false)
+            .setNegativeButton("Dừng", (d, w) -> cancelModInstall(extractTmpDir, tmpZip))
+            .setPositiveButton("Chấp nhận", (d, w) -> {
+                showProgressDialog("Đang cài mod...");
+                executor.execute(() -> proceedModInstallCopy(sourceDir, extractTmpDir, tmpZip));
+            })
+            .create();
+        styleDialog(dialog);
+        dialog.show();
+    }
+
+    // Huỷ cài mod giữa chừng (do người dùng bấm Dừng ở 1 trong 2 bảng cảnh báo
+    // version) — dọn file tạm và mở lại nút bấm cho người dùng.
+    private void cancelModInstall(File extractTmpDir, File tmpZip) {
+        executor.execute(() -> {
+            deleteRecursive(extractTmpDir);
+            tmpZip.delete();
+        });
+        setButtonsEnabled(true);
+        showProgress(false);
+    }
+
+    // Phần copy mod thật sự vào game — tách riêng khỏi finishInstallModFromExtractedDir
+    // để có thể gọi lại sau khi người dùng xác nhận "Chấp nhận" ở bảng cảnh báo version
+    // (không phải lúc nào cũng chạy ngay, có thể bị tạm dừng chờ người dùng quyết định).
+    private void proceedModInstallCopy(File sourceDir, File extractTmpDir, File tmpZip) {
+        String targetPath = RESOURCES_PATH;
 
         updateProgressDialog("Đang cài mod vào game...", 80);
 
@@ -1462,6 +1603,13 @@ public class MainActivity extends AppCompatActivity {
         if (actuallySuccess) {
             updateResourcesStatus();
             showScrollableDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.\n\n─── Debug info ───\n" + debugInfo);
+        } else if (!isCurrentResourcesFixed()) {
+            // Lý do phổ biến nhất khiến copy thất bại/không xác minh được là do
+            // Resources chưa từng được Fix (thư mục Config/marker chưa tồn tại) —
+            // báo đúng nguyên nhân thay vì bảng debug dài khó hiểu với người dùng thường.
+            showDialog("Cài Mod thất bại", "Cài Mod thất bại, hãy thử /Fix Resources/ rồi thử lại.\n\n"
+                + "Lưu ý: Fix Resources sẽ xoá toàn bộ Mod trước đó, bạn có thể cài lại "
+                + "Mod trước đó bằng cách nhấn /Xóa Mod/ ở ứng dụng này.");
         } else {
             showScrollableDialog("⚠️ Nghi ngờ thất bại", "Lệnh copy chạy xong nhưng KHÔNG xác minh được file đã thực sự vào game.\n\n─── Debug info ───\n" + debugInfo
                 + "\n\nHãy chụp màn hình bảng này gửi để debug thêm.");
@@ -1845,6 +1993,33 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    // Chuyển text có đánh dấu /.../ thành CharSequence với phần nằm giữa 2 dấu /
+    // được in đậm (dấu / bị loại bỏ khỏi kết quả hiển thị). Dùng chung cho
+    // showDialog() và bảng thông báo announcement.
+    private CharSequence parseBoldMarkup(String text) {
+        SpannableStringBuilder builder = new SpannableStringBuilder();
+        int i = 0;
+        while (i < text.length()) {
+            int start = text.indexOf('/', i);
+            if (start == -1) {
+                builder.append(text.substring(i));
+                break;
+            }
+            int end = text.indexOf('/', start + 1);
+            if (end == -1) {
+                builder.append(text.substring(i));
+                break;
+            }
+            builder.append(text, i, start);
+            int boldStart = builder.length();
+            builder.append(text, start + 1, end);
+            builder.setSpan(new StyleSpan(Typeface.BOLD), boldStart, builder.length(),
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            i = end + 1;
+        }
+        return builder;
+    }
+
     private void showToast(String msg) {
         mainHandler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
     }
@@ -1853,7 +2028,7 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.post(() -> {
             AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(title)
-                .setMessage(msg)
+                .setMessage(parseBoldMarkup(msg))
                 .setPositiveButton("OK", null)
                 .create();
             styleDialog(dialog);

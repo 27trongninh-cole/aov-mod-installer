@@ -1,5 +1,6 @@
 package com.modinstaller;
 
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.graphics.RectF;
 import android.graphics.Typeface;
@@ -7,6 +8,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -43,6 +46,10 @@ public class TourManager {
     private TextView tvDescription;
     private TextView btnNext;
 
+    private RectF currentRect = null; // rect đang hiển thị, dùng làm điểm bắt đầu khi animate sang bước kế
+    private ValueAnimator rectAnimator;
+    private ValueAnimator pulseAnimator;
+
     private Runnable onFinishedListener;
 
     public TourManager(Activity activity) {
@@ -64,6 +71,7 @@ public class TourManager {
         if (steps.isEmpty()) return;
         currentIndex = 0;
         buildOverlay();
+        startPulseAnimation();
         showStep(currentIndex);
     }
 
@@ -75,10 +83,16 @@ public class TourManager {
         spotlightView = new SpotlightOverlayView(activity);
         spotlightView.setLayoutParams(new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        spotlightView.setAlpha(0f);
         rootContainer.addView(spotlightView);
 
         tooltipView = buildTooltipView();
+        tooltipView.setAlpha(0f);
         rootContainer.addView(tooltipView);
+
+        // Hiệu ứng mờ dần khi tour bắt đầu, thay vì hiện đột ngột
+        spotlightView.animate().alpha(1f).setDuration(220).start();
+        tooltipView.animate().alpha(1f).setDuration(280).setStartDelay(80).start();
     }
 
     private LinearLayout buildTooltipView() {
@@ -172,9 +186,33 @@ public class TourManager {
 
     private void finish() {
         if (rootContainer == null) return;
-        rootContainer.removeView(spotlightView);
-        rootContainer.removeView(tooltipView);
-        if (onFinishedListener != null) onFinishedListener.run();
+        if (rectAnimator != null) rectAnimator.cancel();
+        if (pulseAnimator != null) pulseAnimator.cancel();
+
+        // Mờ dần khi đóng thay vì biến mất đột ngột
+        spotlightView.animate().alpha(0f).setDuration(180).withEndAction(() -> {
+            rootContainer.removeView(spotlightView);
+        }).start();
+        tooltipView.animate().alpha(0f).setDuration(180).withEndAction(() -> {
+            rootContainer.removeView(tooltipView);
+            if (onFinishedListener != null) onFinishedListener.run();
+        }).start();
+    }
+
+    // Vòng lặp hiệu ứng "thở" (pulse) quanh viền spotlight — chạy liên tục
+    // suốt tour, không phụ thuộc bước nào, chỉ để thu hút mắt vào vùng sáng.
+    private void startPulseAnimation() {
+        pulseAnimator = ValueAnimator.ofFloat(0f, 1f);
+        pulseAnimator.setDuration(1100);
+        pulseAnimator.setRepeatCount(ValueAnimator.INFINITE);
+        pulseAnimator.setRepeatMode(ValueAnimator.RESTART);
+        pulseAnimator.setInterpolator(new LinearInterpolator());
+        pulseAnimator.addUpdateListener(a -> {
+            if (spotlightView != null) {
+                spotlightView.setPulseProgress((float) a.getAnimatedValue());
+            }
+        });
+        pulseAnimator.start();
     }
 
     private void showStep(int index) {
@@ -186,24 +224,59 @@ public class TourManager {
             float density = activity.getResources().getDisplayMetrics().density;
             float padding = 8 * density;
 
-            int[] location = new int[2];
-            target.getLocationInWindow(location);
+            // QUAN TRỌNG: getLocationInWindow() trả toạ độ SO VỚI WINDOW, nhưng
+            // spotlightView lại được vẽ tương đối SO VỚI rootContainer (content view).
+            // 2 hệ toạ độ này lệch nhau đúng bằng khoảng cách từ rootContainer tới
+            // rìa window (thường là chiều cao status bar/notch — khác nhau tuỳ máy).
+            // Trước đây dùng thẳng toạ độ window nên bị lệch xuống dưới, và mức độ
+            // lệch khác nhau giữa các thiết bị. Fix: trừ đi toạ độ của rootContainer
+            // để quy về đúng hệ toạ độ cục bộ mà spotlightView đang vẽ.
+            int[] rootLoc = new int[2];
+            rootContainer.getLocationInWindow(rootLoc);
 
-            RectF rect = new RectF(
-                location[0] - padding,
-                location[1] - padding,
-                location[0] + target.getWidth() + padding,
-                location[1] + target.getHeight() + padding);
+            int[] targetLoc = new int[2];
+            target.getLocationInWindow(targetLoc);
 
-            spotlightView.setSpotlightRect(rect, 16 * density);
+            float left = (targetLoc[0] - rootLoc[0]) - padding;
+            float top = (targetLoc[1] - rootLoc[1]) - padding;
+
+            RectF newRect = new RectF(
+                left,
+                top,
+                left + target.getWidth() + padding * 2,
+                top + target.getHeight() + padding * 2);
+
+            animateSpotlightTo(newRect, 16 * density);
 
             tvStepCount.setText("Bước " + (index + 1) + "/" + steps.size());
             tvTitle.setText(step.title);
             tvDescription.setText(step.description);
             btnNext.setText(index == steps.size() - 1 ? "Xong ✓" : "Tiếp →");
 
-            positionTooltip(rect, density);
+            positionTooltip(newRect, density);
         });
+    }
+
+    // Animate spotlight trượt mượt từ vị trí cũ sang vị trí mới thay vì
+    // "nhảy" đột ngột giữa các bước.
+    private void animateSpotlightTo(RectF newRect, float cornerRadius) {
+        if (rectAnimator != null) rectAnimator.cancel();
+
+        RectF startRect = currentRect != null ? currentRect : newRect;
+        rectAnimator = ValueAnimator.ofFloat(0f, 1f);
+        rectAnimator.setDuration(currentRect == null ? 0 : 260);
+        rectAnimator.setInterpolator(new DecelerateInterpolator());
+        rectAnimator.addUpdateListener(a -> {
+            float f = (float) a.getAnimatedValue();
+            RectF lerped = new RectF(
+                startRect.left + (newRect.left - startRect.left) * f,
+                startRect.top + (newRect.top - startRect.top) * f,
+                startRect.right + (newRect.right - startRect.right) * f,
+                startRect.bottom + (newRect.bottom - startRect.bottom) * f);
+            spotlightView.setSpotlightRect(lerped, cornerRadius);
+        });
+        rectAnimator.start();
+        currentRect = newRect;
     }
 
     // Đặt tooltip ngay dưới spotlight nếu đủ chỗ, ngược lại đặt lên trên
@@ -216,12 +289,27 @@ public class TourManager {
             float spaceAbove = spotlightRect.top;
 
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) tooltipView.getLayoutParams();
+            int newTopMargin;
             if (spaceBelow >= tooltipHeight + 24 * density || spaceBelow >= spaceAbove) {
-                lp.topMargin = (int) (spotlightRect.bottom + 16 * density);
+                newTopMargin = (int) (spotlightRect.bottom + 16 * density);
             } else {
-                lp.topMargin = (int) Math.max(24 * density, spotlightRect.top - tooltipHeight - 16 * density);
+                newTopMargin = (int) Math.max(24 * density, spotlightRect.top - tooltipHeight - 16 * density);
             }
-            tooltipView.setLayoutParams(lp);
+
+            // Animate tooltip trượt theo thay vì giật cục khi đổi vị trí trên/dưới
+            if (lp.topMargin != 0 && lp.topMargin != newTopMargin) {
+                ValueAnimator marginAnimator = ValueAnimator.ofInt(lp.topMargin, newTopMargin);
+                marginAnimator.setDuration(220);
+                marginAnimator.setInterpolator(new DecelerateInterpolator());
+                marginAnimator.addUpdateListener(a -> {
+                    lp.topMargin = (int) a.getAnimatedValue();
+                    tooltipView.setLayoutParams(lp);
+                });
+                marginAnimator.start();
+            } else {
+                lp.topMargin = newTopMargin;
+                tooltipView.setLayoutParams(lp);
+            }
         });
     }
 }
