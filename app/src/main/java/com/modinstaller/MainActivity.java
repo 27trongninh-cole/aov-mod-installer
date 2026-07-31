@@ -12,6 +12,8 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
+import androidx.core.content.FileProvider;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.style.StyleSpan;
@@ -55,6 +57,14 @@ public class MainActivity extends AppCompatActivity {
     private boolean isLegacyMode = false; // Android <= 10: dùng File API thường
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
     private static final String ANNOUNCEMENT_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/announcement.txt";
+    // "latest" release trên GitHub luôn có đúng 1 bản (workflow xoá bản "latest" cũ
+    // trước khi tạo bản mới) → link /releases/latest/download/<tên file> luôn trỏ
+    // đúng vào asset của lần build gần nhất, không cần biết tag/version cụ thể.
+    private static final String LATEST_VERSION_URL = "https://github.com/27trongninh-cole/aov-mod-installer/releases/latest/download/version.json";
+    private static final String LATEST_APK_URL = "https://github.com/27trongninh-cole/aov-mod-installer/releases/latest/download/Mod_Ninstaller.apk";
+    private static final String PREF_UPDATE_SKIP_COUNT = "update_skip_count";
+    private static final String PREF_UPDATE_SKIP_VERSION_CODE = "update_skip_version_code";
+    private static final int MAX_UPDATE_SKIPS = 2;
     private static final String PREF_ANNOUNCEMENT_DISMISSED_HASH = "announcement_dismissed_hash";
     private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
@@ -178,7 +188,8 @@ public class MainActivity extends AppCompatActivity {
         });
 
         checkShizukuAndInit();
-        checkAnnouncement();
+        // checkAnnouncement() không gọi ở đây nữa — đã chuyển sang onResume() để
+        // chạy lại mỗi lần app quay lại foreground, không chỉ lúc cold-start.
 
         // Nút hướng dẫn (product tour / spotlight) — luôn có thể mở lại bất cứ lúc nào
         View btnHelpTour = findViewById(R.id.btn_help_tour);
@@ -435,20 +446,44 @@ public class MainActivity extends AppCompatActivity {
         // → Re-check lại mỗi lần app quay lại foreground để badge luôn phản ánh đúng
         // trạng thái thực tế ngay lúc này.
         refreshShizukuStatus();
+
+        // Cùng lý do: 2 lỗi dưới đây trước kia đều chỉ chạy 1 lần ở onCreate.
+        // 1) checkAnnouncement(): nếu người dùng mở lại app đang chạy sẵn (không
+        //    cold-start), onCreate() không chạy lại → sửa announcement.txt trên
+        //    repo xong app không bao giờ biết để hiện thông báo mới.
+        checkAnnouncement();
+
+        // 2) checkMaintenanceMode(): nếu lần chạy shell đầu tiên (lúc cold-start)
+        //    vô tình xảy ra ngay khi Shizuku/rish chưa kịp sẵn sàng hoàn toàn, lệnh
+        //    ls/cat có thể fail trong im lặng → activeVersionFolder bị "đóng băng"
+        //    ở giá trị null (hiện "Chưa Fix" sai) suốt cả phiên, dù Resources thực
+        //    tế vẫn đúng — đây chính là lý do "lúc hiện Đã Fix, lúc hiện Chưa Fix"
+        //    dù Resources không hề đổi. Re-check mỗi lần resume để tự phục hồi.
+        if (isShizukuReadyNow()) {
+            checkMaintenanceMode();
+        }
+
+        // Check cập nhật — cũng chạy lại mỗi lần resume, không chỉ lúc cold-start,
+        // để nếu người dùng bấm "Để sau" rồi vẫn ở trong app lâu, hoặc quay lại app
+        // sau khi có bản mới, đều được nhắc đúng lúc.
+        checkForUpdate();
+    }
+
+    // Kiểm tra Shizuku có đang thực sự sẵn sàng ngay lúc này hay không (không tự
+    // request quyền, không hiện dialog) — dùng chung cho refreshShizukuStatus() và
+    // để quyết định có nên chạy lại checkMaintenanceMode() lúc resume hay không.
+    private boolean isShizukuReadyNow() {
+        if (isLegacyMode) {
+            return checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+        }
+        return Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
     }
 
     // Kiểm tra lại trạng thái Shizuku hiện tại (không tự động request quyền, không
     // hiện dialog) — chỉ dùng để cập nhật badge hiển thị mỗi khi app resume.
     private void refreshShizukuStatus() {
-        if (isLegacyMode) {
-            boolean granted = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                == PackageManager.PERMISSION_GRANTED;
-            updateShizukuStatus(granted);
-            return;
-        }
-        boolean ready = Shizuku.pingBinder()
-            && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
-        updateShizukuStatus(ready);
+        updateShizukuStatus(isShizukuReadyNow());
     }
 
     // ─── Shizuku ────────────────────────────────────────────────
@@ -966,6 +1001,134 @@ public class MainActivity extends AppCompatActivity {
             .create();
         styleDialog(dialog);
         dialog.show();
+    }
+
+    // ─── Kiểm tra cập nhật ─────────────────────────────────────────
+
+    private void checkForUpdate() {
+        executor.execute(() -> {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL(LATEST_VERSION_URL).openConnection();
+                conn.setInstanceFollowRedirects(true);
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+
+                JSONObject json = new JSONObject(sb.toString());
+                int remoteVersionCode = json.getInt("versionCode");
+                String remoteVersionName = json.optString("versionName", "");
+                int localVersionCode = BuildConfig.VERSION_CODE;
+
+                SharedPreferences prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE);
+
+                if (remoteVersionCode <= localVersionCode) {
+                    // Đang ở bản mới nhất (hoặc mới hơn) rồi → dọn bộ đếm "đã bỏ qua"
+                    // cũ đi, để nếu có bản cập nhật MỚI KHÁC xuất hiện sau này thì
+                    // người dùng lại được bỏ qua đủ 2 lần từ đầu, không bị cộng dồn
+                    // oan từ 1 bản cập nhật đã cũ mà họ chưa từng thấy.
+                    prefs.edit()
+                        .remove(PREF_UPDATE_SKIP_COUNT)
+                        .remove(PREF_UPDATE_SKIP_VERSION_CODE)
+                        .apply();
+                    return;
+                }
+
+                // Có bản mới hơn bản đang cài. Bộ đếm "đã bỏ qua" chỉ tính cho ĐÚNG
+                // bản remoteVersionCode này — nếu server đã lên bản mới hơn nữa kể
+                // từ lần cuối người dùng bỏ qua, coi như nhắc nhở mới, đếm lại từ 0.
+                int savedSkipVersionCode = prefs.getInt(PREF_UPDATE_SKIP_VERSION_CODE, -1);
+                int skipCount = (savedSkipVersionCode == remoteVersionCode)
+                    ? prefs.getInt(PREF_UPDATE_SKIP_COUNT, 0) : 0;
+
+                boolean forceUpdate = skipCount >= MAX_UPDATE_SKIPS;
+                mainHandler.post(() -> showUpdateDialog(remoteVersionName, remoteVersionCode, forceUpdate));
+            } catch (Exception ignored) {
+                // Không có mạng / chưa có version.json trên release → bỏ qua lặng lẽ
+            }
+        });
+    }
+
+    private void showUpdateDialog(String versionName, int remoteVersionCode, boolean forceUpdate) {
+        String versionDisplay = versionName.isEmpty() ? "mới nhất" : versionName;
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle(forceUpdate ? "🚨 Bắt buộc cập nhật" : "🔔 Có bản cập nhật mới")
+            .setMessage(forceUpdate
+                ? "Bạn đã bỏ qua cập nhật " + MAX_UPDATE_SKIPS + " lần rồi. Vui lòng cập nhật lên phiên bản "
+                    + versionDisplay + " để tiếp tục sử dụng app."
+                : "Đã có phiên bản mới (" + versionDisplay + "). Cập nhật ngay để trải nghiệm đầy đủ và ổn định nhất.")
+            .setCancelable(false)
+            .setPositiveButton("Cập nhật ngay", (d, w) -> downloadAndInstallUpdate());
+
+        if (!forceUpdate) {
+            builder.setNegativeButton("Để sau", (d, w) -> {
+                SharedPreferences prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE);
+                int savedSkipVersionCode = prefs.getInt(PREF_UPDATE_SKIP_VERSION_CODE, -1);
+                int currentSkipCount = (savedSkipVersionCode == remoteVersionCode)
+                    ? prefs.getInt(PREF_UPDATE_SKIP_COUNT, 0) : 0;
+                prefs.edit()
+                    .putInt(PREF_UPDATE_SKIP_VERSION_CODE, remoteVersionCode)
+                    .putInt(PREF_UPDATE_SKIP_COUNT, currentSkipCount + 1)
+                    .apply();
+            });
+        }
+
+        AlertDialog dialog = builder.create();
+        styleDialog(dialog);
+        dialog.show();
+    }
+
+    // Tải APK bản mới NGAY TRONG APP (dùng lại đúng bảng tiến trình bánh răng như
+    // Fix Resources), thay vì mở trình duyệt trỏ ra ngoài repo — người dùng không
+    // cần (và không nên) biết địa chỉ repo GitHub của app.
+    private void downloadAndInstallUpdate() {
+        executor.execute(() -> {
+            File apkFile = new File(getCacheDir(), "update.apk");
+            try {
+                // Nếu đã tải sẵn từ lần trước (vd lần trước còn thiếu quyền cài đặt,
+                // giờ quay lại bấm tiếp) thì dùng luôn, khỏi tải lại tốn dữ liệu.
+                if (!apkFile.exists() || apkFile.length() == 0) {
+                    mainHandler.post(() -> showProgressDialog("Đang tải bản cập nhật..."));
+                    updateProgressDialog("Đang tải bản cập nhật...", 0);
+                    downloadFileWithProgress(LATEST_APK_URL, apkFile);
+                    updateProgressDialog("Tải xong!", 100);
+                    dismissProgressDialog();
+                }
+                mainHandler.post(() -> promptInstallApk(apkFile));
+            } catch (Exception e) {
+                if (apkFile.exists()) apkFile.delete();
+                dismissProgressDialog();
+                showDialog("Lỗi", "Tải bản cập nhật thất bại: " + e.getMessage() + "\n\nVui lòng thử lại.");
+            }
+        });
+    }
+
+    private void promptInstallApk(File apkFile) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+            // Chưa cấp quyền "Cài đặt ứng dụng không rõ nguồn" cho app này — đưa
+            // thẳng tới đúng màn hình cấp quyền hệ thống cho ĐÚNG app này, người
+            // dùng chỉ cần bật công tắc rồi quay lại bấm "Cập nhật ngay" lần nữa
+            // (file APK đã tải sẵn ở trên sẽ được dùng lại, không tải lại từ đầu).
+            showDialog("Cần cấp quyền cài đặt",
+                "Bật quyền \"Cài đặt ứng dụng không rõ nguồn\" cho Mod Ninstaller ở màn hình tiếp theo, sau đó quay lại bấm /Cập nhật ngay/ lần nữa.");
+            Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + getPackageName()));
+            startActivity(settingsIntent);
+            return;
+        }
+        installApk(apkFile);
+    }
+
+    private void installApk(File apkFile) {
+        Uri apkUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apkFile);
+        Intent installIntent = new Intent(Intent.ACTION_VIEW);
+        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+        installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(installIntent);
     }
 
     // ─── Config ──────────────────────────────────────────────────

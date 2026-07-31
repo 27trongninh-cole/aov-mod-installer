@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- update.apk được tải về getCacheDir() (xem downloadAndInstallUpdate() trong
+         MainActivity.java) — khai báo đúng thư mục này để FileProvider được phép
+         chia sẻ file đó cho trình cài đặt hệ thống. -->
+    <cache-path name="update_apk" path="." />
+</paths>
