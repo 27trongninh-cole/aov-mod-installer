@@ -211,8 +211,8 @@ public class MainActivity extends AppCompatActivity {
         // Công cụ tạo mod
         findViewById(R.id.btn_tool_map).setOnClickListener(v -> {
             Intent intent = new Intent(this, WebViewActivity.class);
-            intent.putExtra(WebViewActivity.EXTRA_URL, "https://mapdes.onrender.com");
-            intent.putExtra(WebViewActivity.EXTRA_TITLE, "Map Texture Tool");
+            intent.putExtra(WebViewActivity.EXTRA_URL, "https://mapinity.onrender.com");
+            intent.putExtra(WebViewActivity.EXTRA_TITLE, "Mapinity");
             startActivity(intent);
         });
 
@@ -223,15 +223,15 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btn_info_fix).setOnClickListener(v ->
             showDialog("🔧 Fix Resources",
                 "Tải Resources mới nhất từ server của Ninfinity về máy.\n\n" +
-                "• Bắt buộc phải chạy trước khi cài Mod\n" +
+                "• Không bắt buộc, có thể bỏ qua\n" +
                 "• File Resources sẽ được lưu cache, các lần sau không cần tải lại (trừ khi có cập nhật)\n" +
-                "• Thư mục Resources gốc của game sẽ được đổi tên thành Resources_ninfinity_backup để bảo toàn")
+                "• Thư mục Resources gốc sẽ được bảo toàn, xoá tất cả Mod sẽ trực tiếp hoàn trả thư mục này")
         );
 
         findViewById(R.id.btn_info_mod).setOnClickListener(v ->
             showDialog("📦 Cài file Mod",
                 "Cài mod vào game từ file .zip.\n\n" +
-                "• Cần chạy Fix Resources trước\n" +
+                "• Nếu cài mod lỗi, cần chạy lại Fix Resources rồi thử lại\n" +
                 "• File .zip hỗ trợ 3 cấu trúc:\n" +
                 "  — Resources/...\n" +
                 "  — files/Resources/...\n" +
@@ -241,9 +241,8 @@ public class MainActivity extends AppCompatActivity {
 
         findViewById(R.id.btn_info_remove).setOnClickListener(v ->
             showDialog("🗑️ Xóa tất cả Mod",
-                "Xóa toàn bộ mod và khôi phục Resources gốc.\n\n" +
-                "• Resources gốc được khôi phục từ cache — không cần tải lại từ server\n" +
-                "• Sau khi xóa mod, có thể cài mod mới ngay mà không cần Fix Resources lại\n" +
+                "Xóa toàn bộ mod và khôi phục Resources trước khi cài bằng ứng dụng.\n\n" +
+                "• Sau khi xóa mod, có thể cần Fix Resources lại để cài mod mới\n" +
                 "• Khởi động lại game sau khi xóa để thấy thay đổi")
         );
     }
