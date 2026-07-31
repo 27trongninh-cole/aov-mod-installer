@@ -2112,24 +2112,24 @@ public class MainActivity extends AppCompatActivity {
 
     private void startAppTour() {
         new TourManager(this)
-            .addStep(tvShizukuLabel,
+            .addStep(findViewById(R.id.shizuku_badge),
                 "Trạng thái Shizuku",
                 "Chấm xanh nghĩa là Shizuku đang chạy và đã cấp quyền — cần thiết để app thao tác được với file game.")
             .addStep(tvResourcesStatus,
                 "Trạng thái Resources",
                 "Cho biết Resources trên máy đã được Fix hay chưa, dựa trên đúng phiên bản game hiện tại.")
-            .addStep(btnFixResources,
+            .addStep(findViewById(R.id.card_fix_resources),
                 "🔧 Fix Resources",
-                "Bấm vào đây đầu tiên để tải và cài Resources cần thiết từ server — bắt buộc phải làm trước khi cài Mod.")
-            .addStep(btnInstallMod,
+                "Bấm vào đây đầu tiên làm mới Resources và đảm bảo cài Mod thành công, không bắt buộc.")
+            .addStep(findViewById(R.id.card_install_mod),
                 "📦 Cài file Mod",
-                "Sau khi đã Fix Resources, dùng nút này để chọn file .zip mod muốn cài vào game.")
-            .addStep(btnRemoveMod,
+                "Dùng nút này để chọn file .zip Mod muốn cài vào game. Nếu cài thất bại, bạn phải Fix Resources trước rồi thử lại.")
+            .addStep(findViewById(R.id.card_remove_mod),
                 "🗑️ Xóa tất cả Mod",
-                "Khôi phục lại Resources gốc, gỡ bỏ toàn bộ mod đã cài trước đó.")
-            .addStep(findViewById(R.id.btn_tool_map),
-                "🗺️ Map Texture Tool",
-                "Công cụ riêng để tự tạo mod thay thế texture bản đồ.")
+                "Xoá tất cả Mod đã cài từ ứng dụng này. Nếu bạn đã Fix Resources trước đó, sẽ hoàn trả lại Resources cũ trước khi Fix.")
+            .addStep(findViewById(R.id.tv_tool_section_label),
+                "🧰 Công cụ tạo Mod",
+                "Các công cụ tạo Mod cùng tác giả, đang cập nhật thêm...")
             .start();
     }
 

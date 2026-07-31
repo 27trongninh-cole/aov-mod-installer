@@ -55,6 +55,7 @@
 
             <!-- Shizuku badge -->
             <LinearLayout
+                android:id="@+id/shizuku_badge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
@@ -151,6 +152,7 @@
 
         <androidx.cardview.widget.CardView
             xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:id="@+id/card_fix_resources"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardCornerRadius="14dp"
@@ -224,6 +226,7 @@
         <!-- Install Mod button -->
         <androidx.cardview.widget.CardView
             xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:id="@+id/card_install_mod"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardCornerRadius="14dp"
@@ -297,6 +300,7 @@
         <!-- Remove Mod button -->
         <androidx.cardview.widget.CardView
             xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:id="@+id/card_remove_mod"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardCornerRadius="14dp"
@@ -378,6 +382,7 @@
 
         <!-- Mod Tools Section -->
         <TextView
+            android:id="@+id/tv_tool_section_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="CÔNG CỤ TẠO MOD"
