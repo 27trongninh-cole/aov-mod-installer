@@ -825,11 +825,6 @@ public class MainActivity extends AppCompatActivity {
     // mục version tương ứng — dùng làm CHUẨN đối chiếu về sau, thay vì đoán qua
     // tên thư mục liệt kê được trên máy (có thể có nhiều thư mục version cũ/mới
     // tồn tại song song cùng lúc, gây báo nhầm bảo trì).
-    private String[] findVersionTxtInExtractedPackage(File extractRoot) {
-        File resourcesDir = new File(extractRoot, "Resources");
-        return findVersionTxtInResourcesFolder(resourcesDir);
-    }
-
     // Như trên, nhưng nhận thẳng thư mục Resources làm tham số (dùng cho file
     // Mod, vì locateResourcesRoot() trả về CHÍNH thư mục Resources đó rồi,
     // không có thêm 1 lớp "Resources/" bọc ngoài như gói tải từ server).
@@ -1377,11 +1372,37 @@ public class MainActivity extends AppCompatActivity {
 
             fixPermissionsRecursively(extractTmpDir);
 
+            // Xác định đúng thư mục gốc chứa nội dung Resources thật bên trong
+            // gói vừa giải nén — KHÔNG giả định cứng "extractTmpDir/. chính là
+            // nội dung của Resources". Lý do: nếu lần đóng gói resources_backup.zip
+            // nào đó trên server bị lồng thừa 1 lớp (Resources/Resources/...)
+            // hoặc thiếu hẳn lớp "Resources" bọc ngoài, copy thẳng theo cách cũ
+            // sẽ tạo ra .../files/Resources/Resources/... trên máy người dùng —
+            // đúng lỗi đã gặp ở luồng cài mod, dùng lại chung logic dò/xác thực
+            // (locateResourcesRoot + fallback locateVersionFolderParent) để tự
+            // sửa các trường hợp đóng gói sai này.
+            File resourcesContentRoot = locateResourcesRoot(extractTmpDir);
+            if (resourcesContentRoot == null) {
+                resourcesContentRoot = locateVersionFolderParent(extractTmpDir);
+            }
+            if (resourcesContentRoot == null) {
+                dismissProgressDialog();
+                deleteRecursive(extractTmpDir);
+                showDialog("Lỗi", "Gói Resources trên server có cấu trúc không hợp lệ "
+                    + "(không tìm thấy thư mục Resources hoặc thư mục version nào bên trong) — "
+                    + "đây là lỗi đóng gói phía server, vui lòng báo Ninfinity.");
+                return;
+            }
+
             // Đọc version.txt chính xác từ gói Resources VỪA giải nén — dùng làm
             // chuẩn đối chiếu chính xác cho các lần check version/bảo trì về sau,
             // và cũng dùng chính tên thư mục này (không phải gameVersion từ config.json)
             // để tạo marker "đã Fix", tránh lệch nếu 2 giá trị này không khớp nhau.
-            String[] versionInfo = findVersionTxtInExtractedPackage(extractTmpDir);
+            // Dùng resourcesContentRoot đã xác thực ở trên (không dùng
+            // findVersionTxtInExtractedPackage() nữa vì hàm đó giả định cứng
+            // "extractTmpDir/Resources", sẽ trả về null sai nếu gói bị lồng
+            // thừa/thiếu lớp Resources — cùng loại lỗi vừa sửa ở trên).
+            String[] versionInfo = findVersionTxtInResourcesFolder(resourcesContentRoot);
             if (versionInfo != null) {
                 resourcesVersionFolder = versionInfo[0];
                 resourcesVersionTxt = versionInfo[1];
@@ -1392,8 +1413,12 @@ public class MainActivity extends AppCompatActivity {
             }
 
             updateProgressDialog("Đang copy vào game...", 75);
-            // rish chỉ làm nhiệm vụ copy file đã giải nén sẵn vào Android/data/
-            boolean copied = runShell("mkdir -p \"" + DATA_PATH + "\" && cp -r \"" + extractTmpDir.getAbsolutePath() + "/.\" \"" + DATA_PATH + "/\"");
+            // rish chỉ làm nhiệm vụ copy file đã giải nén sẵn vào Android/data/.
+            // Copy đúng NỘI DUNG của resourcesContentRoot (đã xác thực) thẳng
+            // vào RESOURCES_PATH — không copy nguyên extractTmpDir/. vào
+            // DATA_PATH/ như trước, để không phụ thuộc cấu trúc lồng nhau
+            // trong zip gốc.
+            boolean copied = runShell("mkdir -p \"" + RESOURCES_PATH + "\" && cp -r \"" + resourcesContentRoot.getAbsolutePath() + "/.\" \"" + RESOURCES_PATH + "/\"");
 
             updateProgressDialog("Dọn dẹp...", 90);
             deleteRecursive(extractTmpDir);
@@ -1896,6 +1921,15 @@ public class MainActivity extends AppCompatActivity {
     // Duyệt đệ quy cây thư mục đã giải nén, tìm thư mục tên "Resources"
     // (không phân biệt hoa/thường) ở bất kỳ độ sâu nào. Trả về chính thư
     // mục đó (không phải thư mục cha).
+    //
+    // QUAN TRỌNG: không dừng ngay khi vừa thấy tên khớp — một số file mod bị
+    // lồng thừa 1 lớp "Resources/Resources/..." (do công cụ nén của người
+    // dùng tự bọc thêm thư mục cùng tên khi tạo zip). Nếu chấp nhận ngay lớp
+    // ngoài, bước copy sau đó sẽ tạo ra .../files/Resources/Resources/... trên
+    // máy người dùng. Vì vậy phải XÁC THỰC: thư mục "Resources" tìm được có
+    // chứa ít nhất 1 thư mục con khớp định dạng version (vd "1.63.1") hay
+    // không — nếu không, phải tiếp tục đào sâu hơn (kể cả xuống thư mục con
+    // cũng tên "Resources") để tìm đúng lớp thật.
     private File locateResourcesRoot(File dir) {
         if (dir == null || !dir.isDirectory()) return null;
         File[] children = dir.listFiles();
@@ -1903,6 +1937,19 @@ public class MainActivity extends AppCompatActivity {
 
         for (File child : children) {
             if (child.isDirectory() && child.getName().equalsIgnoreCase("Resources")) {
+                if (containsVersionFolder(child)) {
+                    return child;
+                }
+                // Tên khớp nhưng nội dung bên trong không giống cấu trúc
+                // Resources thật (không có thư mục version nào) → rất có thể
+                // đây là lớp "Resources" bọc thừa bên ngoài. Đào tiếp bên
+                // trong CHÍNH thư mục này trước, ưu tiên tìm lớp "Resources"
+                // thật nằm sâu hơn.
+                File nested = locateResourcesRoot(child);
+                if (nested != null) return nested;
+                // Không tìm được lớp nào hợp lệ hơn bên trong → đành chấp
+                // nhận lớp ngoài này làm phương án cuối, còn hơn báo lỗi
+                // "không tìm thấy Resources" hoàn toàn.
                 return child;
             }
         }
@@ -1926,6 +1973,20 @@ public class MainActivity extends AppCompatActivity {
     // (findVersionTxtInResourcesFolder, isModVersionMismatch...) đang xử lý.
     private static final java.util.regex.Pattern VERSION_FOLDER_PATTERN =
         java.util.regex.Pattern.compile("\\d+\\.\\d+\\.\\d+.*");
+
+    // Kiểm tra thư mục truyền vào có chứa TRỰC TIẾP ít nhất 1 thư mục con khớp
+    // định dạng version game hay không — dùng để xác thực 1 thư mục "Resources"
+    // tìm được có đúng là lớp chứa nội dung thật, hay chỉ là lớp bọc thừa.
+    private boolean containsVersionFolder(File dir) {
+        File[] children = dir.listFiles();
+        if (children == null) return false;
+        for (File child : children) {
+            if (child.isDirectory() && VERSION_FOLDER_PATTERN.matcher(child.getName()).matches()) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private File locateVersionFolderParent(File dir) {
         if (dir == null || !dir.isDirectory()) return null;
