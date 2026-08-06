@@ -68,10 +68,20 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_ANNOUNCEMENT_DISMISSED_HASH = "announcement_dismissed_hash";
     private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
-    private static final String BACKUP_PATH = DATA_PATH + "/Resources_ninfinity_backup";
+    // Tên thư mục backup cũ (hardcode) — giữ lại làm fallback để nhận diện backup
+    // đã tạo bởi các bản app cũ hơn (trước khi đổi sang tên ngẫu nhiên), tránh
+    // "mất dấu" backup có sẵn của người dùng khi update app.
+    private static final String LEGACY_BACKUP_FOLDER_NAME = "Resources_ninfinity_backup";
+    // Prefix cho tên backup ngẫu nhiên mới — cố định để dễ dò/dọn dẹp orphan sau
+    // này, nhưng không lộ rõ ràng như tên cũ.
+    private static final String BACKUP_FOLDER_PREFIX = "Resources_nf_";
     private static final String PREF_NAME = "mod_ninstaller";
     private static final String PREF_HASH = "resources_hash";
     private static final String PREF_GAME_VERSION = "game_version";
+    // Lưu tên thư mục backup ĐANG active (do app tự sinh ngẫu nhiên hoặc là tên
+    // legacy) — mọi thao tác đọc/ghi backup phải qua getBackupPath(), không dùng
+    // hằng số path cố định nữa.
+    private static final String PREF_BACKUP_FOLDER_NAME = "backup_folder_name";
     private static final String MARKER_FIXED = "4fei6x96e66696e697479";
     private static final String MARKER_MODDED = "4e696e66696e697m4o7d9";
     private static final String VERSION_FILE_NAME = "version.txt";
@@ -1245,6 +1255,40 @@ public class MainActivity extends AppCompatActivity {
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putString(PREF_HASH, hash).apply();
     }
 
+    // ─── Backup Resources gốc: quản lý tên thư mục (TH2) ──────────
+
+    // Trả về đường dẫn ĐẦY ĐỦ tới thư mục backup Resources gốc đang thực sự tồn
+    // tại trên máy, hoặc null nếu không có backup nào. Ưu tiên đọc tên đã lưu
+    // trong pref (do chính app này tạo, tên ngẫu nhiên); nếu pref rỗng (app mới
+    // cài, hoặc backup được tạo bởi bản cũ trước khi có tên ngẫu nhiên) thì
+    // fallback kiểm tra tên legacy cố định để không "mất dấu" backup có sẵn.
+    private String resolveActiveBackupPath() {
+        String savedName = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+            .getString(PREF_BACKUP_FOLDER_NAME, "");
+        if (!savedName.isEmpty()) {
+            String path = DATA_PATH + "/" + savedName;
+            // Đã có tên lưu trong pref (app đã ở cơ chế backup ngẫu nhiên) → tin
+            // tưởng tuyệt đối vào pref, KHÔNG fallback sang tên legacy nữa — nếu
+            // path này không còn tồn tại, coi như không có backup, tránh dùng
+            // nhầm 1 thư mục legacy không rõ nguồn gốc/không khớp thực tế.
+            return fileExists(path) ? path : null;
+        }
+        // Chưa từng lưu tên trong pref → có thể là backup từ bản app cũ, kiểm
+        // tra tên legacy cố định.
+        String legacyPath = DATA_PATH + "/" + LEGACY_BACKUP_FOLDER_NAME;
+        return fileExists(legacyPath) ? legacyPath : null;
+    }
+
+    // Sinh tên thư mục backup ngẫu nhiên (prefix cố định + 8 ký tự hex ngẫu nhiên).
+    private String generateRandomBackupFolderName() {
+        java.security.SecureRandom rnd = new java.security.SecureRandom();
+        byte[] buf = new byte[4];
+        rnd.nextBytes(buf);
+        StringBuilder sb = new StringBuilder();
+        for (byte b : buf) sb.append(String.format("%02x", b));
+        return BACKUP_FOLDER_PREFIX + sb;
+    }
+
     // ─── Tính năng 1: Fix Resources ──────────────────────────────
 
     private void fixResources() {
@@ -1281,14 +1325,33 @@ public class MainActivity extends AppCompatActivity {
             showProgressDialog("Đang cài đặt...");
             updateProgressDialog("Chuẩn bị thư mục...", 10);
 
-            boolean backupExists = fileExists(BACKUP_PATH);
+            String existingBackupPath = resolveActiveBackupPath();
+            boolean backupExists = existingBackupPath != null;
+
             if (!backupExists) {
-                updateProgressDialog("Đổi tên Resources gốc...", 20);
-                boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + BACKUP_PATH + "\"");
-                if (!renamed) {
-                    dismissProgressDialog();
-                    showDialog("Lỗi", "Không thể đổi tên thư mục Resources.");
-                    return;
+                // TH1: nếu không có Resources gốc trên máy (chưa Fix lần nào, hoặc
+                // người dùng/game vừa xoá sạch) thì không có gì để đổi tên — bỏ qua
+                // bước này, đi thẳng tới giải nén + copy bên dưới. Không coi đây là lỗi.
+                boolean hasOriginalResources = fileExists(RESOURCES_PATH);
+                if (hasOriginalResources) {
+                    updateProgressDialog("Đổi tên Resources gốc...", 20);
+                    // TH2: sinh tên backup ngẫu nhiên thay vì tên cố định, tránh xung
+                    // đột nếu 1 thư mục cùng tên đã tồn tại vì lý do bất thường nào đó.
+                    // Lưu ngay vào pref để mọi thao tác sau (kể cả Xóa Mod) dùng đúng
+                    // tên này.
+                    String newBackupName = generateRandomBackupFolderName();
+                    String newBackupPath = DATA_PATH + "/" + newBackupName;
+                    boolean renamed = runShell("mv \"" + RESOURCES_PATH + "\" \"" + newBackupPath + "\"");
+                    if (renamed) {
+                        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                            .putString(PREF_BACKUP_FOLDER_NAME, newBackupName)
+                            .apply();
+                    }
+                    if (!renamed) {
+                        dismissProgressDialog();
+                        showDialog("Lỗi", "Không thể đổi tên thư mục Resources.");
+                        return;
+                    }
                 }
             }
 
@@ -1557,17 +1620,26 @@ public class MainActivity extends AppCompatActivity {
 
         File sourceDir = locateResourcesRoot(extractTmpDir);
 
+        // Fallback: mod chỉ nén thẳng thư mục version (vd "1.63.1/..."), không
+        // có thư mục "Resources/" bọc ngoài — dò tìm thư mục version rồi lấy
+        // cha của nó làm sourceDir.
+        if (sourceDir == null) {
+            sourceDir = locateVersionFolderParent(extractTmpDir);
+        }
+
         if (sourceDir == null) {
             dismissProgressDialog();
             deleteRecursive(extractTmpDir);
             tmpZip.delete();
             showDialog("Lỗi", "Không tìm thấy thư mục Resources trong file mod.\n\n"
-                + "ZIP phải chứa thư mục Resources ở đâu đó bên trong (có thể lồng "
-                + "trong nhiều thư mục cha), ví dụ:\n"
+                + "ZIP phải chứa thư mục Resources, hoặc trực tiếp thư mục version "
+                + "(vd 1.63.1/...), ở đâu đó bên trong (có thể lồng trong nhiều thư "
+                + "mục cha), ví dụ:\n"
                 + "• Resources/...\n"
                 + "• files/Resources/...\n"
                 + "• com.garena.game.kgvn/files/Resources/...\n"
-                + "• TenMod/com.garena.game.kgvn/files/Resources/...");
+                + "• TenMod/com.garena.game.kgvn/files/Resources/...\n"
+                + "• 1.63.1/... (thư mục version trực tiếp)");
             mainHandler.post(() -> {
                 setButtonsEnabled(true);
                 showProgress(false);
@@ -1844,6 +1916,37 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
+    // Một số file mod chỉ nén thẳng thư mục VERSION (vd "1.63.1/...") mà không
+    // bọc trong thư mục "Resources/" bên ngoài — vì tên thư mục version đổi
+    // theo từng bản game nên không thể match cứng "Resources" như trên. Quét
+    // đệ quy tìm thư mục con có tên khớp định dạng version game (3 nhóm số
+    // cách nhau dấu chấm, vd "1.63.1", "1.63.1.10"...), rồi trả về THƯ MỤC CHA
+    // của nó — vì thư mục cha đó đóng đúng vai trò "Resources" (chứa các thư
+    // mục version bên trong), khớp với cách các hàm phía sau
+    // (findVersionTxtInResourcesFolder, isModVersionMismatch...) đang xử lý.
+    private static final java.util.regex.Pattern VERSION_FOLDER_PATTERN =
+        java.util.regex.Pattern.compile("\\d+\\.\\d+\\.\\d+.*");
+
+    private File locateVersionFolderParent(File dir) {
+        if (dir == null || !dir.isDirectory()) return null;
+        File[] children = dir.listFiles();
+        if (children == null) return null;
+
+        for (File child : children) {
+            if (child.isDirectory() && VERSION_FOLDER_PATTERN.matcher(child.getName()).matches()) {
+                return dir;
+            }
+        }
+        // Không có thư mục version ở cấp này → đệ quy xuống các thư mục con
+        for (File child : children) {
+            if (child.isDirectory()) {
+                File found = locateVersionFolderParent(child);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
     // ─── Debug: test rish/cp trực tiếp trong app (thay thế Termux đã hỏng) ────
 
     private void runDebugCpTest() {
@@ -1995,9 +2098,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void removeMod() {
         try {
-            boolean backupExists = fileExists(BACKUP_PATH);
-            if (!backupExists) {
-                showDialog("Lỗi", "Không tìm thấy Resources_ninfinity_backup. Hãy chạy Fix Resources trước.");
+            String activeBackupPath = resolveActiveBackupPath();
+            if (activeBackupPath == null) {
+                showDialog("Lỗi", "Không tìm thấy thư mục backup Resources gốc. Hãy chạy Fix Resources trước.");
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
                     showProgress(false);
@@ -2022,12 +2125,18 @@ public class MainActivity extends AppCompatActivity {
             // KHÔNG unzip lại — người dùng cần bấm Fix Resources lần nữa
             // nếu muốn tiếp tục mod sau khi đã xóa.
             updateProgressDialog("Đang khôi phục Resources gốc...", 70);
-            boolean restored = runShell("mv \"" + BACKUP_PATH + "\" \"" + RESOURCES_PATH + "\"");
+            boolean restored = runShell("mv \"" + activeBackupPath + "\" \"" + RESOURCES_PATH + "\"");
 
             updateProgressDialog("Hoàn tất!", 100);
             dismissProgressDialog();
 
             if (restored) {
+                // Backup vừa được mv về lại Resources gốc → không còn tồn tại nữa,
+                // xoá luôn tên đã lưu trong pref để tránh lần sau resolveActiveBackupPath()
+                // trỏ vào 1 path không còn tồn tại.
+                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                    .remove(PREF_BACKUP_FOLDER_NAME)
+                    .apply();
                 updateResourcesStatus();
                 showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!\n\nLưu ý: cần bấm Fix Resources lại trước khi cài mod mới.");
             } else {
