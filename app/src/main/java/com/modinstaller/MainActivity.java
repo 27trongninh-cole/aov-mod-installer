@@ -43,6 +43,8 @@ import java.net.URL;
 import net.lingala.zip4j.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -1643,16 +1645,28 @@ public class MainActivity extends AppCompatActivity {
     private void finishInstallModFromExtractedDir(File extractTmpDir, File tmpZip) {
         updateProgressDialog("Đang xác định vị trí mod...", 55);
 
-        File sourceDir = locateResourcesRoot(extractTmpDir);
+        // Quét TOÀN BỘ cây thư mục để tìm hết mọi thư mục Resources hợp lệ, thay
+        // vì dừng lại ở ứng viên đầu tiên như trước — vì có 2 tình huống thực tế
+        // không thể xử lý đúng nếu chỉ lấy 1 kết quả đầu tiên:
+        // 1) Mod dạng "nhiều lựa chọn" — ví dụ Cam_xa.zip chứa sẵn nhiều thư mục
+        //    con song song (10%/, 20%/, 30%/...), mỗi thư mục là 1 phương án
+        //    cường độ mod riêng biệt, người dùng phải tự chọn 1.
+        // 2) Mod đóng gói kèm cả bản iOS lẫn Android trong cùng 1 zip (2 thư mục
+        //    Resources khác nhau) — app chỉ cài được cho Android nên phải loại bỏ
+        //    hẳn nhánh iOS khỏi việc xét duyệt, không được coi đó là 1 "lựa chọn".
+        List<File> candidates = new ArrayList<>();
+        collectResourcesCandidates(extractTmpDir, candidates);
 
-        // Fallback: mod chỉ nén thẳng thư mục version (vd "1.63.1/..."), không
-        // có thư mục "Resources/" bọc ngoài — dò tìm thư mục version rồi lấy
-        // cha của nó làm sourceDir.
-        if (sourceDir == null) {
-            sourceDir = locateVersionFolderParent(extractTmpDir);
+        if (candidates.isEmpty()) {
+            // collectResourcesCandidates() dựa trên containsVersionFolder() nên có
+            // thể bỏ sót vài cấu trúc đặc biệt — fallback về logic dò đơn cũ để
+            // không làm hỏng những trường hợp trước đây vẫn cài được.
+            File fallback = locateResourcesRoot(extractTmpDir);
+            if (fallback == null) fallback = locateVersionFolderParent(extractTmpDir);
+            if (fallback != null) candidates.add(fallback);
         }
 
-        if (sourceDir == null) {
+        if (candidates.isEmpty()) {
             dismissProgressDialog();
             deleteRecursive(extractTmpDir);
             tmpZip.delete();
@@ -1672,6 +1686,21 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        if (candidates.size() == 1) {
+            continueInstallWithSourceDir(candidates.get(0), extractTmpDir, tmpZip);
+            return;
+        }
+
+        // Nhiều hơn 1 ứng viên hợp lệ CÙNG LÚC → đây thực sự là mod "nhiều lựa
+        // chọn", không phải lỗi cấu trúc — dừng lại hỏi người dùng chọn 1.
+        List<String> labels = computeCandidateLabels(extractTmpDir, candidates);
+        dismissProgressDialog();
+        mainHandler.post(() -> showModVariantChooserDialog(candidates, labels, extractTmpDir, tmpZip));
+    }
+
+    // Phần còn lại của việc cài mod SAU KHI đã xác định chắc chắn đúng 1 sourceDir
+    // (dù là tự động tìm được, hay do người dùng tự chọn ở bảng nhiều lựa chọn).
+    private void continueInstallWithSourceDir(File sourceDir, File extractTmpDir, File tmpZip) {
         // Kiểm tra thư mục tìm được có thực sự chứa file không (phòng
         // trường hợp giải nén lỗi giữa chừng khiến thư mục gần như rỗng
         // nhưng vẫn "tồn tại" về mặt kỹ thuật).
@@ -1701,6 +1730,106 @@ public class MainActivity extends AppCompatActivity {
 
         proceedModInstallCopy(sourceDir, extractTmpDir, tmpZip);
     }
+
+    // Tên các thư mục coi là nền tảng KHÁC Android — loại bỏ hoàn toàn khỏi việc
+    // quét tìm Resources, không hiện ra như 1 lựa chọn cho người dùng vì app này
+    // chỉ cài được cho Android.
+    // "ios"/"iphone"/"ipad" giữ khớp tuyệt đối ở đây; riêng "ios" còn được so khớp
+    // kiểu "chứa chuỗi con" bên dưới vì tên thư mục thực tế rất đa dạng (Cho iOS,
+    // iOS version, phiên bản iOS...), trong khi các nền tảng khác (windows, pc...)
+    // vẫn giữ khớp tuyệt đối để tránh loại nhầm do trùng ngẫu nhiên 1 phần tên.
+    private static final java.util.Set<String> NON_ANDROID_PLATFORM_NAMES = new java.util.HashSet<>(
+        java.util.Arrays.asList("ios", "iphone", "ipad", "ipados", "macos", "windows", "pc", "win"));
+
+    private boolean isNonAndroidPlatformFolder(String name) {
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        // "ios" được đặt tên theo rất nhiều kiểu khác nhau trên thực tế (Cho iOS,
+        // iOS version, phiên bản iOS...) nên so khớp CHỨA chuỗi "ios" thay vì khớp
+        // tuyệt đối như các nền tảng khác — rủi ro loại nhầm 1 thư mục Android chỉ
+        // vì tên vô tình chứa "ios" gần như không đáng kể trên thực tế.
+        if (lower.contains("ios")) return true;
+        return NON_ANDROID_PLATFORM_NAMES.contains(lower);
+    }
+
+    // Quét đệ quy TOÀN BỘ cây thư mục, thu thập MỌI thư mục đóng vai trò
+    // "Resources" hợp lệ (tức chứa trực tiếp ít nhất 1 thư mục con dạng version,
+    // vd "1.63.1") — không dừng lại ở ứng viên đầu tiên. Nhờ vậy 1 file zip có
+    // nhiều nhánh Resources song song (nhiều lựa chọn mod, hoặc kèm cả iOS) đều
+    // được liệt kê đầy đủ để xử lý đúng, thay vì chỉ thấy đúng 1 nhánh đầu tiên.
+    private void collectResourcesCandidates(File dir, List<File> results) {
+        if (dir == null || !dir.isDirectory()) return;
+        if (isNonAndroidPlatformFolder(dir.getName())) return; // loại cả nhánh, không đào vào
+
+        if (containsVersionFolder(dir)) {
+            // dir đã chứa trực tiếp thư mục version → đây chính là 1 ứng viên hợp
+            // lệ, dù tên thư mục có phải "Resources" hay không (mod không bọc
+            // "Resources/" ở ngoài vẫn nhận diện đúng). Dừng đào sâu ở nhánh này.
+            results.add(dir);
+            return;
+        }
+
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                collectResourcesCandidates(child, results);
+            }
+        }
+    }
+
+    // Sinh tên hiển thị cho từng ứng viên khi cần hỏi người dùng chọn — mặc định
+    // lấy tên thư mục con NGAY DƯỚI extractTmpDir (vd "10%", "20%"), vì hầu hết
+    // trường hợp thực tế điểm phân nhánh nằm ngay ở cấp đầu tiên. Nếu 2 ứng viên
+    // vô tình trùng tên ở cấp đầu (hiếm), fallback dùng cả đường dẫn tương đối
+    // đầy đủ để đảm bảo không có 2 lựa chọn trùng nhãn gây nhầm lẫn.
+    private List<String> computeCandidateLabels(File extractRoot, List<File> candidates) {
+        List<String> firstSegmentLabels = new ArrayList<>();
+        for (File c : candidates) {
+            String rel = extractRoot.toURI().relativize(c.toURI()).getPath();
+            if (rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
+            String[] segs = rel.split("/");
+            firstSegmentLabels.add(segs.length > 0 && !segs[0].isEmpty() ? segs[0] : rel);
+        }
+
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        boolean hasDuplicate = false;
+        for (String label : firstSegmentLabels) {
+            if (!seen.add(label)) {
+                hasDuplicate = true;
+                break;
+            }
+        }
+        if (!hasDuplicate) return firstSegmentLabels;
+
+        List<String> fullPathLabels = new ArrayList<>();
+        for (File c : candidates) {
+            String rel = extractRoot.toURI().relativize(c.toURI()).getPath();
+            if (rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
+            fullPathLabels.add(rel.replace("/", " › "));
+        }
+        return fullPathLabels;
+    }
+
+    // Bảng cho người dùng tự chọn 1 trong nhiều phương án mod tìm được trong
+    // cùng 1 file zip (vd các mức cường độ 10%/20%/30%...).
+    private void showModVariantChooserDialog(List<File> candidates, List<String> labels,
+                                              File extractTmpDir, File tmpZip) {
+        String[] items = labels.toArray(new String[0]);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("📦 Phát hiện nhiều lựa chọn mod")
+            .setMessage("File mod này có nhiều phương án khác nhau, hãy chọn 1:")
+            .setItems(items, (d, which) -> {
+                File chosen = candidates.get(which);
+                showProgressDialog("Đang cài mod...");
+                executor.execute(() -> continueInstallWithSourceDir(chosen, extractTmpDir, tmpZip));
+            })
+            .setOnCancelListener(d -> cancelModInstall(extractTmpDir, tmpZip))
+            .create();
+        styleDialog(dialog);
+        dialog.show();
+    }
+
+
 
     // Dò trực tiếp trên máy (không phụ thuộc lịch sử Fix Resources qua app) để
     // lấy version thực tế đang có trong Resources — dùng làm CHUẨN đối chiếu
