@@ -1,2 +1,1 @@
-Phiên bản ứng dụng: 4.1
-Mới: Fix lỗi logic ở Fix Resources
+Phiên bản mới! Cải tiến mạnh mẽ về giao diện và chức năng.
