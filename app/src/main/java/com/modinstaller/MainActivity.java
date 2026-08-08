@@ -964,7 +964,7 @@ public class MainActivity extends AppCompatActivity {
                 activeVersionFolder = folder;
                 boolean fixed = isFixedSync(folder);
                 mainHandler.post(() -> {
-                    setMaintenanceUI(false, "");
+                    setMaintenanceUI(false, "", "");
                     applyResourcesStatusUI(fixed);
                 });
                 return;
@@ -978,11 +978,18 @@ public class MainActivity extends AppCompatActivity {
             // mục khác.
             String rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
             String matchedFolder = null;
+            // Debug: lưu lại nội dung version.txt đọc được ở MỖI thư mục quét qua —
+            // nếu cuối cùng không khớp được thư mục nào, hiện kèm log này trong dialog
+            // báo bảo trì, để biết chính xác là do KHÔNG đọc được file (rỗng — nghi vấn
+            // quyền Shizuku/đường dẫn) hay ĐỌC ĐƯỢC nhưng nội dung thực sự khác.
+            StringBuilder debugLog = new StringBuilder();
             for (String l : rawOutput.split("\n")) {
                 String folderName = l.trim();
                 if (folderName.isEmpty() || !folderName.matches("\\d+\\.\\d+.*")) continue;
                 String content = runShellOutput(
                     "cat \"" + RESOURCES_PATH + "/" + folderName + "/" + VERSION_FILE_NAME + "\" 2>/dev/null").trim();
+                debugLog.append(folderName).append(": ")
+                    .append(content.isEmpty() ? "(rỗng/không đọc được)" : content).append("\n");
                 if (!content.isEmpty() && content.equals(resourcesVersionTxt)) {
                     matchedFolder = folderName;
                     break;
@@ -997,10 +1004,17 @@ public class MainActivity extends AppCompatActivity {
             // hợp 2 lượt checkMaintenanceMode() gọi gần nhau làm banner bảo trì và
             // dòng "Đã Fix/Chưa Fix" bị tính từ 2 lượt khác nhau, hiển thị lệch nhau.
             boolean fixed = isFixedSync(matchedFolder);
+            String debugSnapshot = debugLog.toString();
 
             mainHandler.post(() -> {
-                setMaintenanceUI(isMaintenance, expectedDisplay);
-                applyResourcesStatusUI(fixed);
+                setMaintenanceUI(isMaintenance, expectedDisplay, debugSnapshot);
+                // QUAN TRỌNG: chỉ áp trạng thái Fix/Chưa Fix khi KHÔNG bảo trì —
+                // setMaintenanceUI() ở trên đã tự set chữ "🚧 Bảo trì" cho cùng ô
+                // tvResourcesStatus khi maintenance=true; gọi thêm applyResourcesStatusUI()
+                // trong TH đó sẽ ghi đè lại thành "Chưa Fix", làm sai lệch với dialog.
+                if (!isMaintenance) {
+                    applyResourcesStatusUI(fixed);
+                }
             });
         });
     }
@@ -1026,7 +1040,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void setMaintenanceUI(boolean maintenance, String expectedVersion) {
+    private void setMaintenanceUI(boolean maintenance, String expectedVersion, String debugSnapshot) {
         setButtonsEnabled(!maintenance);
         if (maintenance) {
             if (tvResourcesStatus != null) {
@@ -1036,8 +1050,19 @@ public class MainActivity extends AppCompatActivity {
             String detail = expectedVersion.isEmpty()
                 ? "Không tìm thấy phiên bản Resources phù hợp trong dữ liệu game hiện tại."
                 : "Dữ liệu game hiện tại không khớp với bản Resources đã Fix (" + expectedVersion + ").";
+            // Log debug (nội dung version.txt thật đọc được ở từng thư mục quét qua)
+            // — giúp phân biệt 2 trường hợp: (1) đọc được nhưng nội dung thực sự khác
+            // (đúng là cần Fix lại), hay (2) không đọc được gì cả (rất có thể do quyền
+            // Shizuku/rish chưa sẵn sàng đúng lúc gọi — false positive, không phải lỗi
+            // thật). Nếu thấy toàn "(rỗng/không đọc được)" dù bạn chắc chắn game đúng
+            // bản, đó là dấu hiệu (2), thử mở lại app hoặc bấm Fix Resources lại xem
+            // còn báo bảo trì không.
+            String debugSection = (debugSnapshot == null || debugSnapshot.isEmpty())
+                ? "\n\n[Debug] Không tìm thấy thư mục version nào trong Resources trên máy."
+                : "\n\n[Debug] Nội dung version.txt đọc được:\n" + debugSnapshot.trim()
+                    + "\n\nKỳ vọng: " + resourcesVersionTxt;
             showDialog("🚧 Đang bảo trì",
-                detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!");
+                detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!" + debugSection);
         }
     }
 
