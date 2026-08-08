@@ -80,16 +80,9 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Khu vực công cụ cài mod cốt lõi (Fix/Cài/Xóa Mod) — ẩn hiện toggle
-             với khu vực "Công cụ khác" bên dưới, không dùng 2 trang riêng vì
-             mỗi khu vực đều khá ít nội dung, tách trang sẽ trống. -->
-        <LinearLayout
-            android:id="@+id/layout_core_tools"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-        <!-- Info card -->
+        <!-- Info card — CỐ ĐỊNH, không nằm trong khu vực bị ẩn/hiện khi vuốt
+             chuyển đổi công cụ, vì phiên bản game/trạng thái Resources cần luôn
+             hiển thị bất kể đang ở khu Cài Mod hay khu Công cụ khác. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -158,6 +151,14 @@
                     android:textStyle="bold" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Khu vực công cụ cài mod cốt lõi (Fix/Cài/Xóa Mod) — ẩn hiện bằng
+             animation vuốt lên/xuống với khu "Công cụ khác" bên dưới. -->
+        <LinearLayout
+            android:id="@+id/layout_core_tools"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
 
         <androidx.cardview.widget.CardView
             xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -392,67 +393,45 @@
             android:indeterminateTint="#e94560"
             android:layout_marginBottom="16dp" />
 
-        <!-- Nút chuyển sang khu vực "Công cụ khác" -->
+        <!-- Thanh gạch ngang kiểu "home indicator" iOS — vuốt lên để chuyển
+             sang khu "Công cụ khác", vuốt xuống để quay lại. Có thể bấm (tap)
+             làm phương án dự phòng cho người không quen thao tác vuốt. -->
         <LinearLayout
-            android:id="@+id/btn_toggle_other_tools"
+            android:id="@+id/handle_bar_row"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:background="@drawable/card_background"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:layout_marginBottom="16dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:paddingTop="6dp"
+            android:paddingBottom="10dp"
+            android:layout_marginBottom="8dp"
             android:clickable="true"
             android:focusable="true">
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="🧰 Các công cụ khác"
-                android:textColor="#ffffff"
-                android:textSize="14sp"
-                android:textStyle="bold" />
+            <View
+                android:layout_width="40dp"
+                android:layout_height="5dp"
+                android:background="@drawable/drag_handle_pill"
+                android:layout_marginBottom="8dp" />
 
             <TextView
-                android:id="@+id/tv_toggle_other_tools_arrow"
+                android:id="@+id/tv_handle_label"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="▾"
-                android:textColor="#e94560"
-                android:textSize="18sp" />
+                android:text="🧰 Các công cụ khác"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <!-- Khu vực "Công cụ khác" — ẨN theo mặc định, thay thế layout_core_tools
-             khi người dùng bấm nút trên. -->
+             khi người dùng vuốt/bấm thanh gạch ngang phía trên. -->
         <LinearLayout
             android:id="@+id/layout_other_tools"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:visibility="gone">
-
-        <!-- Nút quay lại khu Cài mod -->
-        <LinearLayout
-            android:id="@+id/btn_back_to_core_tools"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="4dp"
-            android:layout_marginBottom="16dp"
-            android:clickable="true"
-            android:focusable="true">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="‹ Trở lại Cài Mod"
-                android:textColor="#e94560"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-        </LinearLayout>
 
         <!-- Mod Tools Section -->
         <TextView

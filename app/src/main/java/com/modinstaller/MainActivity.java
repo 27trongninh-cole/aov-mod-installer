@@ -232,21 +232,10 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // ─── Toggle giữa khu Cài Mod (mặc định) và khu Công cụ khác ────────
-        View layoutCoreTools = findViewById(R.id.layout_core_tools);
-        View layoutOtherTools = findViewById(R.id.layout_other_tools);
-        View btnToggleOtherTools = findViewById(R.id.btn_toggle_other_tools);
-        View btnBackToCoreTools = findViewById(R.id.btn_back_to_core_tools);
-
-        btnToggleOtherTools.setOnClickListener(v -> {
-            layoutCoreTools.setVisibility(View.GONE);
-            layoutOtherTools.setVisibility(View.VISIBLE);
-            btnToggleOtherTools.setVisibility(View.GONE);
-        });
-        btnBackToCoreTools.setOnClickListener(v -> {
-            layoutOtherTools.setVisibility(View.GONE);
-            layoutCoreTools.setVisibility(View.VISIBLE);
-            btnToggleOtherTools.setVisibility(View.VISIBLE);
-        });
+        // Vuốt lên/xuống trên thanh gạch ngang (kiểu home indicator iOS) để
+        // chuyển đổi, có animation trượt + mờ dần; bấm (tap) vẫn hoạt động làm
+        // phương án dự phòng cho người không quen thao tác vuốt.
+        setupToolsAreaToggle();
 
         // Công cụ tạo mod
         findViewById(R.id.btn_tool_map).setOnClickListener(v ->
@@ -605,6 +594,85 @@ public class MainActivity extends AppCompatActivity {
     private long bnkFirstTapTime = 0;
     private static final long BNK_TAP_RESET_MS = 3000; // quá 3s không bấm tiếp thì reset đếm
 
+    // ─── Toggle khu Cài Mod ↔ Công cụ khác (vuốt lên/xuống thanh gạch ngang) ──
+
+    private boolean showingOtherTools = false;
+
+    private void setupToolsAreaToggle() {
+        View layoutCoreTools = findViewById(R.id.layout_core_tools);
+        View layoutOtherTools = findViewById(R.id.layout_other_tools);
+        View handleBarRow = findViewById(R.id.handle_bar_row);
+        TextView tvHandleLabel = findViewById(R.id.tv_handle_label);
+
+        android.view.GestureDetector gestureDetector = new android.view.GestureDetector(this,
+            new android.view.GestureDetector.SimpleOnGestureListener() {
+                @Override
+                public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2,
+                                        float velocityX, float velocityY) {
+                    if (e1 == null) return false;
+                    float deltaY = e2.getY() - e1.getY();
+                    // Vuốt lên (deltaY âm, đủ mạnh) → hiện Công cụ khác.
+                    // Vuốt xuống (deltaY dương, đủ mạnh) → quay lại Cài Mod.
+                    if (Math.abs(deltaY) < 40 || Math.abs(velocityY) < 300) return false;
+                    if (deltaY < 0 && !showingOtherTools) {
+                        toggleToolsArea(layoutCoreTools, layoutOtherTools, tvHandleLabel, true);
+                        return true;
+                    } else if (deltaY > 0 && showingOtherTools) {
+                        toggleToolsArea(layoutCoreTools, layoutOtherTools, tvHandleLabel, false);
+                        return true;
+                    }
+                    return false;
+                }
+
+                @Override
+                public boolean onSingleTapUp(android.view.MotionEvent e) {
+                    // Bấm (tap) làm phương án dự phòng — đảo trạng thái hiện tại.
+                    toggleToolsArea(layoutCoreTools, layoutOtherTools, tvHandleLabel, !showingOtherTools);
+                    return true;
+                }
+            });
+
+        handleBarRow.setOnTouchListener((v, event) -> {
+            gestureDetector.onTouchEvent(event);
+            return true;
+        });
+    }
+
+    // Chuyển đổi hiển thị giữa layout_core_tools và layout_other_tools kèm
+    // animation trượt (dịch theo trục Y) + mờ dần, thay vì ẩn/hiện đột ngột.
+    private void toggleToolsArea(View core, View other, TextView handleLabel, boolean toOther) {
+        showingOtherTools = toOther;
+        View showTarget = toOther ? other : core;
+        View hideTarget = toOther ? core : other;
+        float slideDistance = 60f;
+
+        handleLabel.setText(toOther ? "‹ Trở lại Cài Mod" : "🧰 Các công cụ khác");
+
+        hideTarget.animate().cancel();
+        showTarget.animate().cancel();
+
+        hideTarget.animate()
+            .alpha(0f)
+            .translationY(toOther ? -slideDistance : slideDistance)
+            .setDuration(180)
+            .withEndAction(() -> {
+                hideTarget.setVisibility(View.GONE);
+                hideTarget.setTranslationY(0f);
+                hideTarget.setAlpha(1f);
+            })
+            .start();
+
+        showTarget.setAlpha(0f);
+        showTarget.setTranslationY(toOther ? slideDistance : -slideDistance);
+        showTarget.setVisibility(View.VISIBLE);
+        showTarget.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(80)
+            .setDuration(200)
+            .start();
+    }
+
     // Mở WebViewActivity với hiệu ứng trượt lên từ dưới (thay vì chuyển màn
     // hình theo chiều ngang mặc định) — để cảm giác giống 1 cửa sổ nổi/lớp phủ
     // trên app hơn là điều hướng sang trang khác hẳn.
@@ -907,9 +975,13 @@ public class MainActivity extends AppCompatActivity {
             // Chưa từng Fix Resources thành công lần nào nên chưa có version.txt
             // chuẩn để đối chiếu → không đủ căn cứ để báo bảo trì.
             if (resourcesVersionTxt.isEmpty()) {
-                activeVersionFolder = !resourcesVersionFolder.isEmpty() ? resourcesVersionFolder : null;
-                mainHandler.post(() -> setMaintenanceUI(false, ""));
-                updateResourcesStatus();
+                String folder = !resourcesVersionFolder.isEmpty() ? resourcesVersionFolder : null;
+                activeVersionFolder = folder;
+                boolean fixed = isFixedSync(folder);
+                mainHandler.post(() -> {
+                    setMaintenanceUI(false, "");
+                    applyResourcesStatusUI(fixed);
+                });
                 return;
             }
 
@@ -935,10 +1007,38 @@ public class MainActivity extends AppCompatActivity {
             activeVersionFolder = matchedFolder;
             boolean isMaintenance = (matchedFolder == null);
             String expectedDisplay = parseShortVersion(resourcesVersionTxt);
+            // Tính trạng thái Fix NGAY TRONG CÙNG tác vụ này (không queue thêm tác
+            // vụ con đọc lại activeVersionFolder ở 1 thời điểm khác) — tránh trường
+            // hợp 2 lượt checkMaintenanceMode() gọi gần nhau làm banner bảo trì và
+            // dòng "Đã Fix/Chưa Fix" bị tính từ 2 lượt khác nhau, hiển thị lệch nhau.
+            boolean fixed = isFixedSync(matchedFolder);
 
-            mainHandler.post(() -> setMaintenanceUI(isMaintenance, expectedDisplay));
-            updateResourcesStatus();
+            mainHandler.post(() -> {
+                setMaintenanceUI(isMaintenance, expectedDisplay);
+                applyResourcesStatusUI(fixed);
+            });
         });
+    }
+
+    // Check đồng bộ (PHẢI gọi từ thread nền, không phải main thread) trạng thái
+    // Fix của 1 thư mục version cụ thể — dùng chung bởi checkMaintenanceMode()
+    // và updateResourcesStatus() để tránh trùng lặp logic.
+    private boolean isFixedSync(String folder) {
+        if (folder == null || folder.isEmpty()) return false;
+        String configPath = RESOURCES_PATH + "/" + folder + "/Config";
+        return fileExists(configPath + "/" + MARKER_FIXED);
+    }
+
+    // Áp UI trạng thái Resources (PHẢI gọi từ main thread).
+    private void applyResourcesStatusUI(boolean isFixed) {
+        if (tvResourcesStatus == null) return;
+        if (isFixed) {
+            tvResourcesStatus.setText("✅ Đã Fix");
+            tvResourcesStatus.setTextColor(0xFF00CC66);
+        } else {
+            tvResourcesStatus.setText("⚠️ Chưa Fix");
+            tvResourcesStatus.setTextColor(0xFFFFAA00);
+        }
     }
 
     private void setMaintenanceUI(boolean maintenance, String expectedVersion) {
@@ -1096,7 +1196,7 @@ public class MainActivity extends AppCompatActivity {
                     + versionDisplay + " để tiếp tục sử dụng app."
                 : "Đã có phiên bản mới (" + versionDisplay + "). Cập nhật ngay để trải nghiệm đầy đủ và ổn định nhất.")
             .setCancelable(false)
-            .setPositiveButton("Cập nhật ngay", (d, w) -> downloadAndInstallUpdate());
+            .setPositiveButton("Cập nhật ngay", (d, w) -> downloadAndInstallUpdate(remoteVersionCode));
 
         if (!forceUpdate) {
             builder.setNegativeButton("Để sau", (d, w) -> {
@@ -1119,12 +1219,32 @@ public class MainActivity extends AppCompatActivity {
     // Tải APK bản mới NGAY TRONG APP (dùng lại đúng bảng tiến trình bánh răng như
     // Fix Resources), thay vì mở trình duyệt trỏ ra ngoài repo — người dùng không
     // cần (và không nên) biết địa chỉ repo GitHub của app.
-    private void downloadAndInstallUpdate() {
+    //
+    // targetVersionCode: version mà server đang báo là bản mới nhất tại THỜI ĐIỂM
+    // người dùng bấm "Cập nhật ngay" — dùng để đặt tên file cache theo đúng version
+    // đó (update_<versionCode>.apk). Trước đây dùng tên cố định "update.apk" và tái
+    // sử dụng file cũ nếu đã tồn tại (chỉ để tránh tải lại khi thiếu quyền cài đặt)
+    // — nhưng không kiểm tra file cũ đó có đúng là bản đang cần hay không, nên nếu
+    // giữa 2 lần mở app server đã lên thêm bản mới hơn nữa, hoặc file cache còn sót
+    // từ 1 lượt update dở dang trước đó, app sẽ cài nhầm APK cũ → cài đặt thất bại
+    // hoặc cài sai bản mà không rõ lý do.
+    private void downloadAndInstallUpdate(int targetVersionCode) {
         executor.execute(() -> {
-            File apkFile = new File(getCacheDir(), "update.apk");
+            File apkFile = new File(getCacheDir(), "update_" + targetVersionCode + ".apk");
             try {
-                // Nếu đã tải sẵn từ lần trước (vd lần trước còn thiếu quyền cài đặt,
-                // giờ quay lại bấm tiếp) thì dùng luôn, khỏi tải lại tốn dữ liệu.
+                // Dọn các file update_*.apk khác (của version code khác) còn sót lại
+                // từ những lần update trước — tránh rác tích tụ trong cache theo thời
+                // gian, đồng thời đảm bảo không có file cùng tên "update.apk" kiểu cũ
+                // (từ bản app trước khi có sửa lỗi này) gây nhầm lẫn.
+                File[] staleApks = getCacheDir().listFiles((d, name) ->
+                    name.startsWith("update") && name.endsWith(".apk") && !name.equals(apkFile.getName()));
+                if (staleApks != null) {
+                    for (File f : staleApks) f.delete();
+                }
+
+                // Chỉ tái sử dụng file cache nếu nó ĐÚNG version code đang cần (đã đảm
+                // bảo qua tên file ở trên) — vd lần trước tải xong nhưng thiếu quyền
+                // cài đặt, giờ quay lại bấm tiếp thì dùng luôn, khỏi tải lại tốn dữ liệu.
                 if (!apkFile.exists() || apkFile.length() == 0) {
                     mainHandler.post(() -> showProgressDialog("Đang tải bản cập nhật..."));
                     updateProgressDialog("Đang tải bản cập nhật...", 0);
@@ -1207,50 +1327,17 @@ public class MainActivity extends AppCompatActivity {
     // Fix hay chưa — dùng để phân biệt lỗi cài Mod do CHƯA Fix Resources với
     // lỗi copy thật sự (permission, thiếu dung lượng, v.v).
     private boolean isCurrentResourcesFixed() {
-        String folder = activeVersionFolder;
-        if (folder == null || folder.isEmpty()) return false;
-        String configPath = RESOURCES_PATH + "/" + folder + "/Config";
-        return fileExists(configPath + "/" + MARKER_FIXED);
+        return isFixedSync(activeVersionFolder);
     }
 
+    // Dùng cho các nơi gọi ĐỘC LẬP (không phải trong checkMaintenanceMode()),
+    // ví dụ sau khi Cài Mod/Xóa Mod thành công — snapshot activeVersionFolder
+    // ngay lúc gọi, không có rủi ro đua luồng vì đây là điểm gọi đơn lẻ.
     private void updateResourcesStatus() {
         executor.execute(() -> {
-            String folder = activeVersionFolder; // snapshot để tránh race condition
-            if (folder == null || folder.isEmpty()) {
-                // Không xác định được thư mục version đang hoạt động — thường là do
-                // chưa có quyền đọc version.txt (hoặc chưa từng Fix Resources lần nào)
-                // chứ không hẳn là "trạng thái không xác định". Coi như Chưa Fix để
-                // người dùng biết cần bấm Fix Resources, thay vì mơ hồ.
-                mainHandler.post(() -> {
-                    if (tvResourcesStatus != null) {
-                        tvResourcesStatus.setText("⚠️ Chưa Fix");
-                        tvResourcesStatus.setTextColor(0xFFFFAA00);
-                    }
-                });
-                return;
-            }
-
-            String configPath = RESOURCES_PATH + "/" + folder + "/Config";
-            String fixedPath = configPath + "/" + MARKER_FIXED;
-
-            boolean isFixed = fileExists(fixedPath);
-
-            String status;
-            int color;
-            if (isFixed) {
-                status = "✅ Đã Fix";
-                color = 0xFF00CC66;
-            } else {
-                status = "⚠️ Chưa Fix";
-                color = 0xFFFFAA00;
-            }
-
-            mainHandler.post(() -> {
-                if (tvResourcesStatus != null) {
-                    tvResourcesStatus.setText(status);
-                    tvResourcesStatus.setTextColor(color);
-                }
-            });
+            String folder = activeVersionFolder;
+            boolean fixed = isFixedSync(folder);
+            mainHandler.post(() -> applyResourcesStatusUI(fixed));
         });
     }
 
