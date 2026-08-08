@@ -976,19 +976,40 @@ public class MainActivity extends AppCompatActivity {
             // từng thư mục (không phải tên thư mục) để tìm đúng bản khớp với Resources
             // đã Fix — tránh báo nhầm bảo trì khi vẫn còn 1 thư mục đúng nằm cạnh thư
             // mục khác.
+            boolean resourcesPathExists = fileExists(RESOURCES_PATH);
             String rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
+
+            // Tự động hỏi lại nếu lần đầu trả về rỗng — lúc app vừa mở (cold start),
+            // kênh giao tiếp với Shizuku đôi khi chưa "nóng máy" kịp, khiến lệnh ls
+            // đầu tiên hụt hơi (trả về rỗng dù thư mục thực tế vẫn còn), làm báo sai
+            // "Bảo trì"/"Chưa Fix" dù không hề đổi gì. Chờ 1 chút rồi hỏi lại — nếu
+            // vẫn rỗng sau vài lần thử mới thật sự tin là rỗng.
+            int retriesLeft = 2;
+            while (rawOutput.trim().isEmpty() && retriesLeft > 0) {
+                try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+                resourcesPathExists = fileExists(RESOURCES_PATH);
+                rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
+                retriesLeft--;
+            }
+
             String matchedFolder = null;
-            // Debug: lưu lại nội dung version.txt đọc được ở MỖI thư mục quét qua —
-            // nếu cuối cùng không khớp được thư mục nào, hiện kèm log này trong dialog
-            // báo bảo trì, để biết chính xác là do KHÔNG đọc được file (rỗng — nghi vấn
-            // quyền Shizuku/đường dẫn) hay ĐỌC ĐƯỢC nhưng nội dung thực sự khác.
+            // Debug: giữ lại RAW output của `ls` (không lọc) — trước đây chỉ log
+            // những dòng khớp định dạng số, nên khi KHÔNG có dòng nào khớp, debug
+            // trống trơn, không phân biệt được "Resources/ rỗng thật" với "có thư
+            // mục nhưng tên không khớp định dạng mong đợi". Giờ luôn hiện đúng những
+            // gì `ls` trả về, cộng thêm kiểm tra riêng đường dẫn Resources/ có tồn
+            // tại hay không.
             StringBuilder debugLog = new StringBuilder();
+            debugLog.append("Resources/ tồn tại: ").append(resourcesPathExists ? "có" : "KHÔNG").append("\n");
+            debugLog.append("ls Resources/ trả về:\n")
+                .append(rawOutput.trim().isEmpty() ? "(rỗng)" : rawOutput.trim()).append("\n");
+
             for (String l : rawOutput.split("\n")) {
                 String folderName = l.trim();
                 if (folderName.isEmpty() || !folderName.matches("\\d+\\.\\d+.*")) continue;
                 String content = runShellOutput(
                     "cat \"" + RESOURCES_PATH + "/" + folderName + "/" + VERSION_FILE_NAME + "\" 2>/dev/null").trim();
-                debugLog.append(folderName).append(": ")
+                debugLog.append("→ ").append(folderName).append("/").append(VERSION_FILE_NAME).append(": ")
                     .append(content.isEmpty() ? "(rỗng/không đọc được)" : content).append("\n");
                 if (!content.isEmpty() && content.equals(resourcesVersionTxt)) {
                     matchedFolder = folderName;
@@ -1057,10 +1078,7 @@ public class MainActivity extends AppCompatActivity {
             // thật). Nếu thấy toàn "(rỗng/không đọc được)" dù bạn chắc chắn game đúng
             // bản, đó là dấu hiệu (2), thử mở lại app hoặc bấm Fix Resources lại xem
             // còn báo bảo trì không.
-            String debugSection = (debugSnapshot == null || debugSnapshot.isEmpty())
-                ? "\n\n[Debug] Không tìm thấy thư mục version nào trong Resources trên máy."
-                : "\n\n[Debug] Nội dung version.txt đọc được:\n" + debugSnapshot.trim()
-                    + "\n\nKỳ vọng: " + resourcesVersionTxt;
+            String debugSection = "\n\n[Debug]\n" + debugSnapshot.trim() + "\n\nKỳ vọng version.txt: " + resourcesVersionTxt;
             showDialog("🚧 Đang bảo trì",
                 detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!" + debugSection);
         }
