@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Activity bên dưới (MainActivity) đứng yên, không bị đẩy/mờ đi -->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fromYDelta="0%"
+    android:toYDelta="0%"
+    android:duration="260" />

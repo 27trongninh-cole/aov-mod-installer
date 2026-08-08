@@ -1,9 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- Root nền trong suốt: chừa khoảng trên cùng để "cửa sổ" bên dưới trông
+     giống 1 lớp phủ nổi lên (bo góc trên) thay vì choán trọn màn hình như
+     Activity thông thường. Kết hợp hiệu ứng slide_up_in khi mở. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#00000000">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_marginTop="34dp"
     android:orientation="vertical"
-    android:background="#1a1a2e">
+    android:background="@drawable/webview_window_bg"
+    android:elevation="12dp"
+    android:clipToOutline="true">
 
     <!-- Top bar -->
     <LinearLayout
@@ -63,3 +74,5 @@
         android:layout_weight="1" />
 
 </LinearLayout>
+</FrameLayout>
+

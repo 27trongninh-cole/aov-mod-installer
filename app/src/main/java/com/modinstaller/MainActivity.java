@@ -231,13 +231,32 @@ public class MainActivity extends AppCompatActivity {
             tvGameVersion.setText(gameVersion);
         }
 
-        // Công cụ tạo mod
-        findViewById(R.id.btn_tool_map).setOnClickListener(v -> {
-            Intent intent = new Intent(this, WebViewActivity.class);
-            intent.putExtra(WebViewActivity.EXTRA_URL, "https://mapinity.onrender.com");
-            intent.putExtra(WebViewActivity.EXTRA_TITLE, "Mapinity");
-            startActivity(intent);
+        // ─── Toggle giữa khu Cài Mod (mặc định) và khu Công cụ khác ────────
+        View layoutCoreTools = findViewById(R.id.layout_core_tools);
+        View layoutOtherTools = findViewById(R.id.layout_other_tools);
+        View btnToggleOtherTools = findViewById(R.id.btn_toggle_other_tools);
+        View btnBackToCoreTools = findViewById(R.id.btn_back_to_core_tools);
+
+        btnToggleOtherTools.setOnClickListener(v -> {
+            layoutCoreTools.setVisibility(View.GONE);
+            layoutOtherTools.setVisibility(View.VISIBLE);
+            btnToggleOtherTools.setVisibility(View.GONE);
         });
+        btnBackToCoreTools.setOnClickListener(v -> {
+            layoutOtherTools.setVisibility(View.GONE);
+            layoutCoreTools.setVisibility(View.VISIBLE);
+            btnToggleOtherTools.setVisibility(View.VISIBLE);
+        });
+
+        // Công cụ tạo mod
+        findViewById(R.id.btn_tool_map).setOnClickListener(v ->
+            openWebViewWindow("https://mapinity.onrender.com", "Mapinity"));
+
+        // Mod Sảnh / FPS Cao — chưa có backend thật, hiện thông báo tạm thời
+        findViewById(R.id.btn_tool_lobby).setOnClickListener(v ->
+            showDialog("🏛️ Mod Sảnh", "Tính năng đang được phát triển, sẽ cập nhật trong bản sau."));
+        findViewById(R.id.btn_tool_fps).setOnClickListener(v ->
+            showDialog("⚡ FPS Cao", "Tính năng đang được phát triển, sẽ cập nhật trong bản sau."));
 
         // BNK Studio — khóa mặc định, mở khóa bằng cách bấm 7 lần liên tiếp
         setupBnkStudioButton();
@@ -586,6 +605,17 @@ public class MainActivity extends AppCompatActivity {
     private long bnkFirstTapTime = 0;
     private static final long BNK_TAP_RESET_MS = 3000; // quá 3s không bấm tiếp thì reset đếm
 
+    // Mở WebViewActivity với hiệu ứng trượt lên từ dưới (thay vì chuyển màn
+    // hình theo chiều ngang mặc định) — để cảm giác giống 1 cửa sổ nổi/lớp phủ
+    // trên app hơn là điều hướng sang trang khác hẳn.
+    private void openWebViewWindow(String url, String title) {
+        Intent intent = new Intent(this, WebViewActivity.class);
+        intent.putExtra(WebViewActivity.EXTRA_URL, url);
+        intent.putExtra(WebViewActivity.EXTRA_TITLE, title);
+        startActivity(intent);
+        overridePendingTransition(R.anim.slide_up_in, R.anim.stay_still);
+    }
+
     private void setupBnkStudioButton() {
         View btnBnk = findViewById(R.id.btn_tool_bnk);
         TextView tvIcon = findViewById(R.id.tv_bnk_icon);
@@ -606,10 +636,7 @@ public class MainActivity extends AppCompatActivity {
 
             if (currentlyUnlocked) {
                 // Đã mở khóa → mở thẳng WebView
-                Intent intent = new Intent(this, WebViewActivity.class);
-                intent.putExtra(WebViewActivity.EXTRA_URL, "https://bnkenin.netlify.app/");
-                intent.putExtra(WebViewActivity.EXTRA_TITLE, "BNK Studio");
-                startActivity(intent);
+                openWebViewWindow("https://bnkenin.netlify.app/", "BNK Studio");
                 return;
             }
 

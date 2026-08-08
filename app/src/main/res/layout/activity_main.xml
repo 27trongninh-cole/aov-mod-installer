@@ -80,6 +80,15 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Khu vực công cụ cài mod cốt lõi (Fix/Cài/Xóa Mod) — ẩn hiện toggle
+             với khu vực "Công cụ khác" bên dưới, không dùng 2 trang riêng vì
+             mỗi khu vực đều khá ít nội dung, tách trang sẽ trống. -->
+        <LinearLayout
+            android:id="@+id/layout_core_tools"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
         <!-- Info card -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -371,6 +380,9 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        </LinearLayout>
+        <!-- Hết layout_core_tools -->
+
         <!-- Progress bar -->
         <ProgressBar
             android:id="@+id/progress_bar"
@@ -379,6 +391,68 @@
             android:visibility="gone"
             android:indeterminateTint="#e94560"
             android:layout_marginBottom="16dp" />
+
+        <!-- Nút chuyển sang khu vực "Công cụ khác" -->
+        <LinearLayout
+            android:id="@+id/btn_toggle_other_tools"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/card_background"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🧰 Các công cụ khác"
+                android:textColor="#ffffff"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_toggle_other_tools_arrow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▾"
+                android:textColor="#e94560"
+                android:textSize="18sp" />
+        </LinearLayout>
+
+        <!-- Khu vực "Công cụ khác" — ẨN theo mặc định, thay thế layout_core_tools
+             khi người dùng bấm nút trên. -->
+        <LinearLayout
+            android:id="@+id/layout_other_tools"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+        <!-- Nút quay lại khu Cài mod -->
+        <LinearLayout
+            android:id="@+id/btn_back_to_core_tools"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:layout_marginBottom="16dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="‹ Trở lại Cài Mod"
+                android:textColor="#e94560"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <!-- Mod Tools Section -->
         <TextView
@@ -515,6 +589,128 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- Mod Sảnh -->
+        <androidx.cardview.widget.CardView
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:id="@+id/card_tool_lobby"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="4dp"
+            app:cardBackgroundColor="#16213e"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:id="@+id/btn_tool_lobby"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🏛️"
+                    android:textSize="20sp"
+                    android:layout_marginEnd="12dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Mod Sảnh"
+                        android:textColor="#ffffff"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Tùy chỉnh giao diện sảnh chờ"
+                        android:textColor="#666688"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textColor="#e94560"
+                    android:textSize="22sp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- FPS Cao -->
+        <androidx.cardview.widget.CardView
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:id="@+id/card_tool_fps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="4dp"
+            app:cardBackgroundColor="#16213e"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:id="@+id/btn_tool_fps"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚡"
+                    android:textSize="20sp"
+                    android:layout_marginEnd="12dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Bật FPS Cao"
+                        android:textColor="#ffffff"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Cài file cho phép FPS cao"
+                        android:textColor="#666688"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textColor="#e94560"
+                    android:textSize="22sp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- Coming Soon Tool -->
         <androidx.cardview.widget.CardView
             xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -563,6 +759,9 @@
                 </LinearLayout>
             </LinearLayout>
         </androidx.cardview.widget.CardView>
+
+        </LinearLayout>
+        <!-- Hết layout_other_tools -->
 
         <!-- Credit -->
         <TextView
