@@ -26,11 +26,13 @@ public class TourManager {
         final View targetView;
         final String title;
         final String description;
+        final Runnable onBeforeShow;
 
-        Step(View targetView, String title, String description) {
+        Step(View targetView, String title, String description, Runnable onBeforeShow) {
             this.targetView = targetView;
             this.title = title;
             this.description = description;
+            this.onBeforeShow = onBeforeShow;
         }
     }
 
@@ -57,8 +59,17 @@ public class TourManager {
     }
 
     public TourManager addStep(View targetView, String title, String description) {
+        return addStep(targetView, title, description, null);
+    }
+
+    // Overload có thêm onBeforeShow: chạy NGAY TRƯỚC khi đo vị trí target — dùng
+    // cho các target có thể đang bị ẩn (visibility GONE) tại thời điểm addStep(),
+    // ví dụ nằm trong 1 khu vực cần bật hiện lên trước thì mới đo được toạ độ
+    // thật. Không có bước này, view GONE sẽ có width/height = 0, khiến khung
+    // spotlight bị lệch/vô hiệu.
+    public TourManager addStep(View targetView, String title, String description, Runnable onBeforeShow) {
         if (targetView != null) {
-            steps.add(new Step(targetView, title, description));
+            steps.add(new Step(targetView, title, description, onBeforeShow));
         }
         return this;
     }
@@ -218,6 +229,10 @@ public class TourManager {
     private void showStep(int index) {
         Step step = steps.get(index);
         View target = step.targetView;
+
+        // Chạy hook trước khi đo — vd bật hiện 1 khu vực đang GONE, để target có
+        // toạ độ/kích thước thật khi đo bên dưới.
+        if (step.onBeforeShow != null) step.onBeforeShow.run();
 
         // post() để đợi layout ổn định, đảm bảo target đã có toạ độ thật trên màn hình
         target.post(() -> {

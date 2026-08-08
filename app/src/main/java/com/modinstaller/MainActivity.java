@@ -237,18 +237,12 @@ public class MainActivity extends AppCompatActivity {
         // phương án dự phòng cho người không quen thao tác vuốt.
         setupToolsAreaToggle();
 
-        // Công cụ tạo mod
+        // Công cụ tạo mod — hiện chỉ có Map Texture Tool. Các tool khác (BNK
+        // Studio, Mod Sảnh, FPS Cao...) đã được gỡ khỏi bản này, xem hướng dẫn
+        // thêm lại/thêm mới ở cuối file MainActivity.java (phần comment
+        // "HƯỚNG DẪN THÊM TOOL MỚI").
         findViewById(R.id.btn_tool_map).setOnClickListener(v ->
             openWebViewWindow("https://mapinity.onrender.com", "Mapinity"));
-
-        // Mod Sảnh / FPS Cao — chưa có backend thật, hiện thông báo tạm thời
-        findViewById(R.id.btn_tool_lobby).setOnClickListener(v ->
-            showDialog("🏛️ Mod Sảnh", "Tính năng đang được phát triển, sẽ cập nhật trong bản sau."));
-        findViewById(R.id.btn_tool_fps).setOnClickListener(v ->
-            showDialog("⚡ FPS Cao", "Tính năng đang được phát triển, sẽ cập nhật trong bản sau."));
-
-        // BNK Studio — khóa mặc định, mở khóa bằng cách bấm 7 lần liên tiếp
-        setupBnkStudioButton();
 
         // Nút thông tin (!)
         findViewById(R.id.btn_info_fix).setOnClickListener(v ->
@@ -587,13 +581,6 @@ public class MainActivity extends AppCompatActivity {
         return intent;
     }
 
-    // ─── BNK Studio: khóa mặc định, mở khóa bằng 7 lần bấm liên tiếp ────
-
-    private static final String PREF_BNK_UNLOCKED = "bnk_studio_unlocked";
-    private int bnkTapCount = 0;
-    private long bnkFirstTapTime = 0;
-    private static final long BNK_TAP_RESET_MS = 3000; // quá 3s không bấm tiếp thì reset đếm
-
     // ─── Toggle khu Cài Mod ↔ Công cụ khác (vuốt lên/xuống thanh gạch ngang) ──
 
     private boolean showingOtherTools = false;
@@ -633,6 +620,10 @@ public class MainActivity extends AppCompatActivity {
             });
 
         handleBarRow.setOnTouchListener((v, event) -> {
+            // Chặn ScrollView cha giành gesture (vừa cuộn trang vừa chạy animation
+            // toggle cùng lúc gây giật/khựng) — chỉ giữ đúng gesture này cho riêng
+            // thanh gạch ngang xử lý.
+            v.getParent().requestDisallowInterceptTouchEvent(true);
             gestureDetector.onTouchEvent(event);
             return true;
         });
@@ -651,6 +642,14 @@ public class MainActivity extends AppCompatActivity {
         hideTarget.animate().cancel();
         showTarget.animate().cancel();
 
+        // Bật hardware layer trong lúc animate — 2 khu vực này chứa nhiều
+        // CardView lồng nhau (bo góc, đổ bóng elevation), nếu để layer mặc định
+        // (NONE) thì mỗi frame animate đều phải vẽ lại toàn bộ cây view phức tạp
+        // đó bằng software rendering → giật/khựng. Layer hardware giúp GPU chỉ
+        // cần dịch chuyển/mờ dần 1 texture đã render sẵn, mượt hơn nhiều.
+        hideTarget.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        showTarget.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+
         hideTarget.animate()
             .alpha(0f)
             .translationY(toOther ? -slideDistance : slideDistance)
@@ -659,6 +658,7 @@ public class MainActivity extends AppCompatActivity {
                 hideTarget.setVisibility(View.GONE);
                 hideTarget.setTranslationY(0f);
                 hideTarget.setAlpha(1f);
+                hideTarget.setLayerType(View.LAYER_TYPE_NONE, null);
             })
             .start();
 
@@ -670,6 +670,7 @@ public class MainActivity extends AppCompatActivity {
             .translationY(0f)
             .setStartDelay(80)
             .setDuration(200)
+            .withEndAction(() -> showTarget.setLayerType(View.LAYER_TYPE_NONE, null))
             .start();
     }
 
@@ -684,66 +685,50 @@ public class MainActivity extends AppCompatActivity {
         overridePendingTransition(R.anim.slide_up_in, R.anim.stay_still);
     }
 
-    private void setupBnkStudioButton() {
-        View btnBnk = findViewById(R.id.btn_tool_bnk);
-        TextView tvIcon = findViewById(R.id.tv_bnk_icon);
-        TextView tvTitle = findViewById(R.id.tv_bnk_title);
-        TextView tvSubtitle = findViewById(R.id.tv_bnk_subtitle);
-        TextView tvArrow = findViewById(R.id.tv_bnk_arrow);
-
-        boolean unlocked = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
-            .getBoolean(PREF_BNK_UNLOCKED, false);
-
-        if (unlocked) {
-            applyBnkUnlockedUI(tvIcon, tvTitle, tvSubtitle, tvArrow);
-        }
-
-        btnBnk.setOnClickListener(v -> {
-            boolean currentlyUnlocked = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
-                .getBoolean(PREF_BNK_UNLOCKED, false);
-
-            if (currentlyUnlocked) {
-                // Đã mở khóa → mở thẳng WebView
-                openWebViewWindow("https://bnkenin.netlify.app/", "BNK Studio");
-                return;
-            }
-
-            // Chưa mở khóa → đếm số lần bấm liên tiếp trong khoảng thời gian ngắn
-            long now = System.currentTimeMillis();
-            if (now - bnkFirstTapTime > BNK_TAP_RESET_MS) {
-                bnkTapCount = 0;
-                bnkFirstTapTime = now;
-            }
-            bnkTapCount++;
-
-            if (bnkTapCount >= 7) {
-                bnkTapCount = 0;
-                AlertDialog d = new AlertDialog.Builder(this)
-                    .setTitle("👀 Bị phát hiện rồi!")
-                    .setMessage("Đúng là không qua mắt được bạn, nhưng sử dụng tính năng chưa ra mắt "
-                        + "có thể kèm theo rủi ro khóa tài khoản. Tiếp tục?")
-                    .setPositiveButton("Tiếp tục", (dlg, w) -> {
-                        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
-                            .putBoolean(PREF_BNK_UNLOCKED, true).apply();
-                        applyBnkUnlockedUI(tvIcon, tvTitle, tvSubtitle, tvArrow);
-                        showToast("Đã mở khóa BNK Studio!");
-                    })
-                    .setNegativeButton("Hủy", null)
-                    .create();
-                styleDialog(d);
-                d.show();
-            }
-        });
-    }
-
-    private void applyBnkUnlockedUI(TextView tvIcon, TextView tvTitle, TextView tvSubtitle, TextView tvArrow) {
-        tvIcon.setText("🗺️");
-        tvTitle.setText("BNK Studio");
-        tvTitle.setTextColor(0xFFffffff);
-        tvSubtitle.setText("Tạo mod nhạc/giọng tướng");
-        tvSubtitle.setTextColor(0xFF888899);
-        tvArrow.setText("›");
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    // HƯỚNG DẪN THÊM TOOL MỚI (đọc kỹ trước khi thêm)
+    // ═══════════════════════════════════════════════════════════════════
+    // Bản này chỉ giữ lại đúng 1 tool (Map Texture) trong khu "Công cụ khác"
+    // (layout_other_tools trong activity_main.xml). Muốn thêm tool mới (BNK
+    // Studio, Mod Sảnh, FPS Cao, Camera xa, hoặc bất kỳ tool nào khác), làm
+    // theo 3 bước sau — không cần đụng gì tới phần Fix/Cài/Xóa Mod hay logic
+    // toggle/animation, chúng độc lập hoàn toàn với danh sách tool này.
+    //
+    // BƯỚC 1 — Thêm card trong activity_main.xml:
+    //   Mở activity_main.xml, tìm khối "<!-- Map Texture Tool -->" (nằm trong
+    //   layout_other_tools). Copy nguyên khối CardView đó (từ
+    //   <androidx.cardview.widget.CardView ...> tới </androidx.cardview.widget.CardView>),
+    //   dán ngay bên dưới, rồi đổi 3 chỗ:
+    //     - android:id của LinearLayout con (vd "@+id/btn_tool_fps")
+    //     - icon (emoji trong TextView đầu tiên, vd "⚡")
+    //     - tên + mô tả (2 TextView tiêu đề/phụ đề)
+    //
+    // BƯỚC 2 — Gắn hành vi khi bấm, trong MainActivity.java:
+    //   Tìm dòng "findViewById(R.id.btn_tool_map).setOnClickListener(...)"
+    //   trong onCreate(), thêm ngay bên dưới:
+    //
+    //     findViewById(R.id.btn_tool_fps).setOnClickListener(v ->
+    //         openWebViewWindow("https://your-webtool-url.com", "Tên hiển thị"));
+    //
+    //   (openWebViewWindow() đã có sẵn — mở WebView dạng cửa sổ nổi, dùng lại
+    //   được cho MỌI webtool mới, không cần viết gì thêm.)
+    //
+    //   Nếu tool chưa có webtool thật (chỉ muốn để chỗ trước), dùng tạm:
+    //     findViewById(R.id.btn_tool_fps).setOnClickListener(v ->
+    //         showDialog("⚡ Tên tool", "Đang phát triển, sẽ cập nhật sau."));
+    //
+    // BƯỚC 3 (tùy chọn) — Nếu muốn tool bị khóa, chỉ mở khi bấm nhiều lần liên
+    //   tiếp (kiểu "easter egg" như BNK Studio bản trước), có thể tham khảo lại
+    //   lịch sử git của app (đã bị gỡ khỏi bản này) để lấy lại logic đếm số lần
+    //   bấm liên tiếp trong khoảng thời gian ngắn + lưu trạng thái mở khóa vào
+    //   SharedPreferences — không có sẵn trong bản này nữa, cần tự viết lại nếu
+    //   cần dùng.
+    //
+    // Riêng camera mod: mình (Claude) không tham gia phần này theo đúng thoả
+    // thuận trước đó — bạn tự thêm card + link webtool của bạn theo đúng 2
+    // bước trên là được, cấu trúc hoàn toàn giống các tool khác, không có gì
+    // đặc biệt ở phía app.
+    // ═══════════════════════════════════════════════════════════════════
 
     private boolean checkShizuku() {
         if (isLegacyMode) return true; // Android <= 10 không cần Shizuku
@@ -2704,7 +2689,24 @@ public class MainActivity extends AppCompatActivity {
                 "Xoá tất cả Mod đã cài từ ứng dụng này. Nếu bạn đã Fix Resources trước đó, sẽ hoàn trả lại Resources cũ trước khi Fix.")
             .addStep(findViewById(R.id.tv_tool_section_label),
                 "🧰 Công cụ tạo Mod",
-                "Các công cụ tạo Mod cùng tác giả, đang cập nhật thêm...")
+                "Vuốt lên thanh gạch ngang phía dưới bất cứ lúc nào để mở khu vực này — nơi chứa các công cụ tạo Mod cùng tác giả.",
+                // Target đang nằm trong layout_other_tools (GONE mặc định) — cần bật
+                // hiện lên TRƯỚC khi TourManager đo toạ độ, không thì khung sáng sẽ
+                // bị lệch/vô hiệu (đã gặp lỗi này).
+                () -> {
+                    findViewById(R.id.layout_core_tools).setVisibility(View.GONE);
+                    findViewById(R.id.layout_other_tools).setVisibility(View.VISIBLE);
+                    showingOtherTools = true;
+                    ((TextView) findViewById(R.id.tv_handle_label)).setText("‹ Trở lại Cài Mod");
+                })
+            .setOnFinishedListener(() -> {
+                // Trả lại đúng trạng thái mặc định (khu Cài Mod) sau khi tour kết
+                // thúc, để không để lại UI ở trạng thái bất thường cho người dùng.
+                findViewById(R.id.layout_other_tools).setVisibility(View.GONE);
+                findViewById(R.id.layout_core_tools).setVisibility(View.VISIBLE);
+                showingOtherTools = false;
+                ((TextView) findViewById(R.id.tv_handle_label)).setText("🧰 Các công cụ khác");
+            })
             .start();
     }
 
