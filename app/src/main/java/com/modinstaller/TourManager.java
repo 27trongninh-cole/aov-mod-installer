@@ -74,8 +74,9 @@ public class TourManager {
         return this;
     }
 
-    public void setOnFinishedListener(Runnable listener) {
+    public TourManager setOnFinishedListener(Runnable listener) {
         this.onFinishedListener = listener;
+        return this;
     }
 
     public void start() {
