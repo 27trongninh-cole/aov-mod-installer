@@ -757,7 +757,7 @@ public class MainActivity extends AppCompatActivity {
     // thay vì cố mở web.
     private static final ToolItem[] OTHER_TOOLS = {
         new ToolItem("🗺️", "Map Texture Tool", "Thay thế texture bản đồ", "https://mapinity.onrender.com"),
-        // new ToolItem("⚡", "FPS Cao", "Cài file cho phép FPS cao", "coming_soon"),
+        new ToolItem("📷", "Camera Xa", "Tạo file Camera tuỳ chỉnh", "https://camerinity.onrender.com"),
         // new ToolItem("🏛️", "Mod Sảnh", "Tùy chỉnh giao diện sảnh chờ", "coming_soon"),
     };
 
