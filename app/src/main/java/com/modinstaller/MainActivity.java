@@ -1162,7 +1162,7 @@ public class MainActivity extends AppCompatActivity {
                 boolean fixed = isFixedSync(folder);
                 mainHandler.post(() -> {
                     setMaintenanceUI(false, "", "");
-                    applyResourcesStatusUI(fixed);
+                    applyResourcesStatusUI(fixed, "checkMaintenanceMode() [chưa có resourcesVersionTxt]");
                 });
                 hideLoadingOverlay();
                 return;
@@ -1233,7 +1233,7 @@ public class MainActivity extends AppCompatActivity {
                 // tvResourcesStatus khi maintenance=true; gọi thêm applyResourcesStatusUI()
                 // trong TH đó sẽ ghi đè lại thành "Chưa Fix", làm sai lệch với dialog.
                 if (!isMaintenance) {
-                    applyResourcesStatusUI(fixed);
+                    applyResourcesStatusUI(fixed, "checkMaintenanceMode() [đã đối chiếu version.txt]");
                 }
             });
             hideLoadingOverlay();
@@ -1246,11 +1246,39 @@ public class MainActivity extends AppCompatActivity {
     private boolean isFixedSync(String folder) {
         if (folder == null || folder.isEmpty()) return false;
         String configPath = RESOURCES_PATH + "/" + folder + "/Config";
-        return fileExists(configPath + "/" + MARKER_FIXED);
+        String markerPath = configPath + "/" + MARKER_FIXED;
+
+        // Cùng lý do với retry ở bước "ls Resources/" bên trên: kênh giao tiếp
+        // Shizuku đôi khi khựng 1 lần (đặc biệt ngay sau cold-start hoặc sau khi
+        // Shizuku vừa "tỉnh" lại), khiến ĐÚNG 1 lần gọi fileExists() cho marker
+        // này trả về sai (false) dù file thực tế vẫn còn nguyên — bước check
+        // trước đây gọi fileExists() có 1 lần DUY NHẤT, không dò lại, nên 1 lần
+        // khựng đó đủ để hiện sai "Chưa Fix" ngay cả khi mọi bước khác đều đúng.
+        // Thêm dò lại y hệt kiểu đã dùng cho "ls Resources/" — CHỈ dò lại khi kết
+        // quả là "không có" (false), vì false-negative (nói KHÔNG có trong khi
+        // THẬT SỰ có) là rủi ro do lỗi kết nối; false-positive (nói CÓ trong khi
+        // thật sự không) gần như không xảy ra do lỗi kết nối kiểu này.
+        boolean fixed = fileExists(markerPath);
+        int retriesLeft = 2;
+        while (!fixed && retriesLeft > 0) {
+            try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+            fixed = fileExists(markerPath);
+            retriesLeft--;
+        }
+        return fixed;
     }
 
     // Áp UI trạng thái Resources (PHẢI gọi từ main thread).
-    private void applyResourcesStatusUI(boolean isFixed) {
+    // "source" chỉ để DEBUG — hiện Toast ngắn ghi rõ đúng chỗ nào trong code vừa
+    // gọi cập nhật này (chỉ hiện ở bản build debug, KHÔNG hiện với người dùng
+    // thường). Dùng để bắt đúng thủ phạm gây nhảy Đã Fix/Chưa Fix bất thường mà
+    // đọc code tĩnh không thấy hết được — mỗi lần trạng thái đổi, Toast sẽ ghi
+    // rõ hàm nào vừa gây ra thay đổi đó.
+    private void applyResourcesStatusUI(boolean isFixed, String source) {
+        if (BuildConfig.DEBUG) {
+            Toast.makeText(this, "[DEBUG] " + source + " → " + (isFixed ? "Đã Fix" : "Chưa Fix"),
+                Toast.LENGTH_SHORT).show();
+        }
         if (tvResourcesStatus == null) return;
         if (isFixed) {
             tvResourcesStatus.setText("✅ Đã Fix");
@@ -1647,7 +1675,7 @@ public class MainActivity extends AppCompatActivity {
         executor.execute(() -> {
             String folder = activeVersionFolder;
             boolean fixed = isFixedSync(folder);
-            mainHandler.post(() -> applyResourcesStatusUI(fixed));
+            mainHandler.post(() -> applyResourcesStatusUI(fixed, "updateResourcesStatus() [sau Cài/Xoá Mod]"));
         });
     }
 
