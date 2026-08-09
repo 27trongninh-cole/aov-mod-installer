@@ -19,6 +19,7 @@ import android.text.SpannableStringBuilder;
 import android.text.style.StyleSpan;
 import android.view.View;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -249,12 +250,9 @@ public class MainActivity extends AppCompatActivity {
         // phương án dự phòng cho người không quen thao tác vuốt.
         setupToolsAreaToggle();
 
-        // Công cụ tạo mod — hiện chỉ có Map Texture Tool. Các tool khác (BNK
-        // Studio, Mod Sảnh, FPS Cao...) đã được gỡ khỏi bản này, xem hướng dẫn
-        // thêm lại/thêm mới ở cuối file MainActivity.java (phần comment
-        // "HƯỚNG DẪN THÊM TOOL MỚI").
-        findViewById(R.id.btn_tool_map).setOnClickListener(v ->
-            openWebViewWindow("https://mapinity.onrender.com", "Mapinity"));
+        // Công cụ tạo mod — tự động tạo từ danh sách OTHER_TOOLS (tìm ở gần
+        // cuối file). Muốn thêm/sửa tool, chỉ cần sửa danh sách đó.
+        populateOtherTools();
 
         // Nút thông tin (!)
         findViewById(R.id.btn_info_fix).setOnClickListener(v ->
@@ -626,20 +624,39 @@ public class MainActivity extends AppCompatActivity {
         View handleBarRow = findViewById(R.id.handle_bar_row);
         TextView tvHandleLabel = findViewById(R.id.tv_handle_label);
 
+        // Cờ đảm bảo mỗi lượt kéo (từ lúc đặt ngón tay xuống tới khi nhấc lên) chỉ
+        // kích hoạt chuyển đổi ĐÚNG 1 LẦN — reset lại ở onDown() mỗi khi bắt đầu
+        // 1 cử chỉ mới.
+        boolean[] triggeredThisGesture = {false};
+        float dragThresholdPx = 28f * getResources().getDisplayMetrics().density;
+
         android.view.GestureDetector gestureDetector = new android.view.GestureDetector(this,
             new android.view.GestureDetector.SimpleOnGestureListener() {
                 @Override
-                public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2,
-                                        float velocityX, float velocityY) {
-                    if (e1 == null) return false;
+                public boolean onDown(android.view.MotionEvent e) {
+                    triggeredThisGesture[0] = false;
+                    return true;
+                }
+
+                @Override
+                public boolean onScroll(android.view.MotionEvent e1, android.view.MotionEvent e2,
+                                         float distanceX, float distanceY) {
+                    // Bắt NGAY TRONG LÚC KÉO (không cần đợi nhấc tay/đủ nhanh như onFling)
+                    // — đây là lý do chính khiến cử chỉ trước đây cảm giác "cứng": onFling
+                    // của Android có ngưỡng vận tốc tối thiểu Ở TẦNG HỆ THỐNG, vuốt chậm/từ
+                    // tốn sẽ không bao giờ được công nhận là fling dù mình tự hạ ngưỡng
+                    // riêng xuống bao nhiêu. onScroll không bị giới hạn này, phản hồi tức
+                    // thì theo đúng khoảng cách kéo thực tế.
+                    if (e1 == null || triggeredThisGesture[0]) return false;
                     float deltaY = e2.getY() - e1.getY();
-                    // Vuốt lên (deltaY âm, đủ mạnh) → hiện Công cụ khác.
-                    // Vuốt xuống (deltaY dương, đủ mạnh) → quay lại Cài Mod.
-                    if (Math.abs(deltaY) < 40 || Math.abs(velocityY) < 300) return false;
+                    if (Math.abs(deltaY) < dragThresholdPx) return false;
+
                     if (deltaY < 0 && !showingOtherTools) {
+                        triggeredThisGesture[0] = true;
                         toggleToolsArea(layoutCoreTools, layoutOtherTools, tvHandleLabel, true);
                         return true;
                     } else if (deltaY > 0 && showingOtherTools) {
+                        triggeredThisGesture[0] = true;
                         toggleToolsArea(layoutCoreTools, layoutOtherTools, tvHandleLabel, false);
                         return true;
                     }
@@ -721,49 +738,114 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // HƯỚNG DẪN THÊM TOOL MỚI (đọc kỹ trước khi thêm)
+    // 🔧 THÊM TOOL MỚI Ở ĐÂY — CHỈ CẦN THÊM 1 DÒNG, KHÔNG CẦN SỬA GÌ KHÁC
     // ═══════════════════════════════════════════════════════════════════
-    // Bản này chỉ giữ lại đúng 1 tool (Map Texture) trong khu "Công cụ khác"
-    // (layout_other_tools trong activity_main.xml). Muốn thêm tool mới (BNK
-    // Studio, Mod Sảnh, FPS Cao, Camera xa, hoặc bất kỳ tool nào khác), làm
-    // theo 3 bước sau — không cần đụng gì tới phần Fix/Cài/Xóa Mod hay logic
-    // toggle/animation, chúng độc lập hoàn toàn với danh sách tool này.
+    // Mỗi dòng bên dưới là 1 thẻ (card) sẽ tự động hiện trong khu "Công cụ
+    // khác". Copy nguyên 1 dòng bất kỳ, dán xuống dưới, rồi đổi 4 chỗ trong
+    // dấu ngoặc kép — xong, không cần đụng tới file XML hay bất kỳ chỗ nào
+    // khác trong file này.
     //
-    // BƯỚC 1 — Thêm card trong activity_main.xml:
-    //   Mở activity_main.xml, tìm khối "<!-- Map Texture Tool -->" (nằm trong
-    //   layout_other_tools). Copy nguyên khối CardView đó (từ
-    //   <androidx.cardview.widget.CardView ...> tới </androidx.cardview.widget.CardView>),
-    //   dán ngay bên dưới, rồi đổi 3 chỗ:
-    //     - android:id của LinearLayout con (vd "@+id/btn_tool_fps")
-    //     - icon (emoji trong TextView đầu tiên, vd "⚡")
-    //     - tên + mô tả (2 TextView tiêu đề/phụ đề)
+    //     new ToolItem("Icon", "Tên hiển thị", "Mô tả ngắn", "Link webtool"),
     //
-    // BƯỚC 2 — Gắn hành vi khi bấm, trong MainActivity.java:
-    //   Tìm dòng "findViewById(R.id.btn_tool_map).setOnClickListener(...)"
-    //   trong onCreate(), thêm ngay bên dưới:
+    // Icon: 1 emoji bất kỳ, ví dụ "🗺️" "⚡" "🎥" "🏛️"
+    // Tên hiển thị: tên tool, ví dụ "FPS Cao"
+    // Mô tả ngắn: 1 dòng phụ đề nhỏ bên dưới tên
+    // Link webtool: địa chỉ web sẽ mở ra khi bấm vào thẻ đó
     //
-    //     findViewById(R.id.btn_tool_fps).setOnClickListener(v ->
-    //         openWebViewWindow("https://your-webtool-url.com", "Tên hiển thị"));
-    //
-    //   (openWebViewWindow() đã có sẵn — mở WebView dạng cửa sổ nổi, dùng lại
-    //   được cho MỌI webtool mới, không cần viết gì thêm.)
-    //
-    //   Nếu tool chưa có webtool thật (chỉ muốn để chỗ trước), dùng tạm:
-    //     findViewById(R.id.btn_tool_fps).setOnClickListener(v ->
-    //         showDialog("⚡ Tên tool", "Đang phát triển, sẽ cập nhật sau."));
-    //
-    // BƯỚC 3 (tùy chọn) — Nếu muốn tool bị khóa, chỉ mở khi bấm nhiều lần liên
-    //   tiếp (kiểu "easter egg" như BNK Studio bản trước), có thể tham khảo lại
-    //   lịch sử git của app (đã bị gỡ khỏi bản này) để lấy lại logic đếm số lần
-    //   bấm liên tiếp trong khoảng thời gian ngắn + lưu trạng thái mở khóa vào
-    //   SharedPreferences — không có sẵn trong bản này nữa, cần tự viết lại nếu
-    //   cần dùng.
-    //
-    // Riêng camera mod: mình (Claude) không tham gia phần này theo đúng thoả
-    // thuận trước đó — bạn tự thêm card + link webtool của bạn theo đúng 2
-    // bước trên là được, cấu trúc hoàn toàn giống các tool khác, không có gì
-    // đặc biệt ở phía app.
-    // ═══════════════════════════════════════════════════════════════════
+    // Nếu tool CHƯA có link thật (chỉ muốn để chỗ trước), điền link bất kỳ,
+    // ví dụ "coming_soon" — khi bấm sẽ tự hiện thông báo "Đang phát triển"
+    // thay vì cố mở web.
+    private static final ToolItem[] OTHER_TOOLS = {
+        new ToolItem("🗺️", "Map Texture Tool", "Thay thế texture bản đồ", "https://mapinity.onrender.com"),
+        // new ToolItem("⚡", "FPS Cao", "Cài file cho phép FPS cao", "coming_soon"),
+        // new ToolItem("🏛️", "Mod Sảnh", "Tùy chỉnh giao diện sảnh chờ", "coming_soon"),
+    };
+
+    // Cấu trúc dữ liệu cho 1 tool — không cần hiểu dòng này, chỉ cần biết nó
+    // giữ đúng 4 thông tin ở trên.
+    private static class ToolItem {
+        final String icon, title, subtitle, url;
+        ToolItem(String icon, String title, String subtitle, String url) {
+            this.icon = icon; this.title = title; this.subtitle = subtitle; this.url = url;
+        }
+    }
+
+    // Tự động tạo UI thẻ cho từng tool trong OTHER_TOOLS ở trên, đổ vào
+    // container_other_tools (activity_main.xml) — code này KHÔNG cần sửa khi
+    // thêm tool mới, chỉ cần sửa danh sách OTHER_TOOLS phía trên.
+    private void populateOtherTools() {
+        LinearLayout container = findViewById(R.id.container_other_tools);
+        int density = (int) getResources().getDisplayMetrics().density;
+
+        for (ToolItem tool : OTHER_TOOLS) {
+            androidx.cardview.widget.CardView card = new androidx.cardview.widget.CardView(this);
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            cardParams.bottomMargin = 12 * density;
+            card.setLayoutParams(cardParams);
+            card.setRadius(14 * density);
+            card.setCardElevation(4 * density);
+            card.setCardBackgroundColor(0xFF16213e);
+
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 60 * density));
+            row.setPadding(16 * density, 0, 16 * density, 0);
+            row.setClickable(true);
+            row.setFocusable(true);
+            android.util.TypedValue outValue = new android.util.TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, outValue, true);
+            row.setBackgroundResource(outValue.resourceId);
+
+            TextView tvIcon = new TextView(this);
+            tvIcon.setText(tool.icon);
+            tvIcon.setTextSize(20);
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            iconParams.rightMargin = 12 * density;
+            tvIcon.setLayoutParams(iconParams);
+
+            LinearLayout textCol = new LinearLayout(this);
+            textCol.setOrientation(LinearLayout.VERTICAL);
+            textCol.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+            TextView tvTitle = new TextView(this);
+            tvTitle.setText(tool.title);
+            tvTitle.setTextColor(0xFFffffff);
+            tvTitle.setTextSize(14);
+            tvTitle.setTypeface(tvTitle.getTypeface(), android.graphics.Typeface.BOLD);
+
+            TextView tvSubtitle = new TextView(this);
+            tvSubtitle.setText(tool.subtitle);
+            tvSubtitle.setTextColor(0xFF666688);
+            tvSubtitle.setTextSize(11);
+
+            textCol.addView(tvTitle);
+            textCol.addView(tvSubtitle);
+
+            TextView tvArrow = new TextView(this);
+            tvArrow.setText("›");
+            tvArrow.setTextColor(0xFFe94560);
+            tvArrow.setTextSize(22);
+
+            row.addView(tvIcon);
+            row.addView(textCol);
+            row.addView(tvArrow);
+            card.addView(row);
+            container.addView(card);
+
+            row.setOnClickListener(v -> {
+                if ("coming_soon".equals(tool.url)) {
+                    showDialog(tool.icon + " " + tool.title, "Đang phát triển, sẽ cập nhật sau.");
+                } else {
+                    openWebViewWindow(tool.url, tool.title);
+                }
+            });
+        }
+    }
 
     private boolean checkShizuku() {
         if (isLegacyMode) return true; // Android <= 10 không cần Shizuku
@@ -2832,26 +2914,9 @@ public class MainActivity extends AppCompatActivity {
             .addStep(findViewById(R.id.card_remove_mod),
                 "🗑️ Xóa tất cả Mod",
                 "Xoá tất cả Mod đã cài từ ứng dụng này. Nếu bạn đã Fix Resources trước đó, sẽ hoàn trả lại Resources cũ trước khi Fix.")
-            .addStep(findViewById(R.id.tv_tool_section_label),
+            .addStep(findViewById(R.id.handle_bar_row),
                 "🧰 Công cụ tạo Mod",
-                "Vuốt lên thanh gạch ngang phía dưới bất cứ lúc nào để mở khu vực này — nơi chứa các công cụ tạo Mod cùng tác giả.",
-                // Target đang nằm trong layout_other_tools (GONE mặc định) — cần bật
-                // hiện lên TRƯỚC khi TourManager đo toạ độ, không thì khung sáng sẽ
-                // bị lệch/vô hiệu (đã gặp lỗi này).
-                () -> {
-                    findViewById(R.id.layout_core_tools).setVisibility(View.GONE);
-                    findViewById(R.id.layout_other_tools).setVisibility(View.VISIBLE);
-                    showingOtherTools = true;
-                    ((TextView) findViewById(R.id.tv_handle_label)).setText("‹ Trở lại Cài Mod");
-                })
-            .setOnFinishedListener(() -> {
-                // Trả lại đúng trạng thái mặc định (khu Cài Mod) sau khi tour kết
-                // thúc, để không để lại UI ở trạng thái bất thường cho người dùng.
-                findViewById(R.id.layout_other_tools).setVisibility(View.GONE);
-                findViewById(R.id.layout_core_tools).setVisibility(View.VISIBLE);
-                showingOtherTools = false;
-                ((TextView) findViewById(R.id.tv_handle_label)).setText("🧰 Các công cụ khác");
-            })
+                "Vuốt lên (hoặc bấm) thanh gạch ngang này bất cứ lúc nào để mở khu vực chứa các công cụ tạo Mod cùng tác giả.")
             .start();
     }
 

@@ -444,65 +444,15 @@
             android:letterSpacing="0.1"
             android:layout_marginBottom="12dp" />
 
-        <!-- Map Texture Tool -->
-        <androidx.cardview.widget.CardView
-            xmlns:app="http://schemas.android.com/apk/res-auto"
+        <!-- Các thẻ công cụ được TẠO TỰ ĐỘNG từ danh sách OTHER_TOOLS trong
+             MainActivity.java — không cần thêm/sửa gì ở file XML này nữa. Muốn
+             thêm tool mới, chỉ cần sửa danh sách đó (xem hướng dẫn ngay phía
+             trên khai báo OTHER_TOOLS trong MainActivity.java). -->
+        <LinearLayout
+            android:id="@+id/container_other_tools"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="4dp"
-            app:cardBackgroundColor="#16213e"
-            android:layout_marginBottom="12dp">
-
-            <LinearLayout
-                android:id="@+id/btn_tool_map"
-                android:layout_width="match_parent"
-                android:layout_height="60dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🗺️"
-                    android:textSize="20sp"
-                    android:layout_marginEnd="12dp" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Map Texture Tool"
-                        android:textColor="#ffffff"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Thay thế texture bản đồ"
-                        android:textColor="#666688"
-                        android:textSize="11sp" />
-                </LinearLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="›"
-                    android:textColor="#e94560"
-                    android:textSize="22sp" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+            android:orientation="vertical" />
 
         </LinearLayout>
         <!-- Hết layout_other_tools -->
