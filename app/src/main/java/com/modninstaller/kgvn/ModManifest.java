@@ -1,4 +1,4 @@
-package com.modinstaller;
+package com.modninstaller.kgvn;
 
 import android.content.Context;
 

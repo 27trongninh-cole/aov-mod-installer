@@ -558,12 +558,13 @@
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
+        android:elevation="8dp"
         android:visibility="visible">
 
         <ImageView
             android:layout_width="72dp"
             android:layout_height="72dp"
-            android:src="@mipmap/ic_launcher"
+            android:src="@drawable/logo_header"
             android:layout_marginBottom="24dp" />
 
         <ProgressBar

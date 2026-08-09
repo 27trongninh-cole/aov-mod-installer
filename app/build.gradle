@@ -3,15 +3,15 @@ plugins {
 }
 
 android {
-    namespace 'com.modinstaller'
+    namespace 'com.modninstaller.kgvn'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.modinstaller"
+        applicationId "com.modninstaller.kgvn"
         minSdk 26
         targetSdk 34
-        versionCode 51
-        versionName "5.1"
+        versionCode 1
+        versionName "1.0.0"
     }
 
     signingConfigs {

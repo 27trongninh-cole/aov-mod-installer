@@ -1,4 +1,4 @@
-package com.modinstaller;
+package com.modninstaller.kgvn;
 
 import android.animation.ValueAnimator;
 import android.app.Activity;

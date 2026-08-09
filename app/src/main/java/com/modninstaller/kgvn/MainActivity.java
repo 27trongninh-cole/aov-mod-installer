@@ -1,4 +1,4 @@
-package com.modinstaller;
+package com.modninstaller.kgvn;
 
 import android.app.AlertDialog;
 import android.Manifest;
@@ -1229,7 +1229,7 @@ public class MainActivity extends AppCompatActivity {
             mainHandler.post(() -> {
                 setMaintenanceUI(isMaintenance, expectedDisplay, debugSnapshot);
                 // QUAN TRỌNG: chỉ áp trạng thái Fix/Chưa Fix khi KHÔNG bảo trì —
-                // setMaintenanceUI() ở trên đã tự set chữ "🚧 Bảo trì" cho cùng ô
+                // setMaintenanceUI() ở trên đã tự set chữ "⏸ Bảo trì" cho cùng ô
                 // tvResourcesStatus khi maintenance=true; gọi thêm applyResourcesStatusUI()
                 // trong TH đó sẽ ghi đè lại thành "Chưa Fix", làm sai lệch với dialog.
                 if (!isMaintenance) {
@@ -1269,22 +1269,17 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Áp UI trạng thái Resources (PHẢI gọi từ main thread).
-    // "source" chỉ để DEBUG — hiện Toast ngắn ghi rõ đúng chỗ nào trong code vừa
-    // gọi cập nhật này (chỉ hiện ở bản build debug, KHÔNG hiện với người dùng
-    // thường). Dùng để bắt đúng thủ phạm gây nhảy Đã Fix/Chưa Fix bất thường mà
-    // đọc code tĩnh không thấy hết được — mỗi lần trạng thái đổi, Toast sẽ ghi
-    // rõ hàm nào vừa gây ra thay đổi đó.
+    // "source" chỉ ghi vào Logcat (android.util.Log) để dò lỗi bằng adb sau này
+    // nếu cần — KHÔNG hiện gì trên màn hình, vì app không có bản "debug riêng
+    // cho mình xem" nào cả, mọi bản build đều tới tay người dùng thật.
     private void applyResourcesStatusUI(boolean isFixed, String source) {
-        if (BuildConfig.DEBUG) {
-            Toast.makeText(this, "[DEBUG] " + source + " → " + (isFixed ? "Đã Fix" : "Chưa Fix"),
-                Toast.LENGTH_SHORT).show();
-        }
+        android.util.Log.d("ModNinstaller", source + " -> " + (isFixed ? "Đã Fix" : "Chưa Fix"));
         if (tvResourcesStatus == null) return;
         if (isFixed) {
-            tvResourcesStatus.setText("✅ Đã Fix");
+            tvResourcesStatus.setText("✓ Đã Fix");
             tvResourcesStatus.setTextColor(0xFF00CC66);
         } else {
-            tvResourcesStatus.setText("⚠️ Chưa Fix");
+            tvResourcesStatus.setText("✗ Chưa Fix");
             tvResourcesStatus.setTextColor(0xFFFFAA00);
         }
     }
@@ -1363,7 +1358,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (isShizukuTimeout) {
             if (tvResourcesStatus != null) {
-                tvResourcesStatus.setText("🔌 Mất kết nối");
+                tvResourcesStatus.setText("⚠ Mất kết nối");
                 tvResourcesStatus.setTextColor(0xFFFF6666);
             }
             showShizukuTimeoutDialog();
@@ -1371,7 +1366,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (tvResourcesStatus != null) {
-            tvResourcesStatus.setText("🚧 Bảo trì");
+            tvResourcesStatus.setText("⏸ Bảo trì");
             tvResourcesStatus.setTextColor(0xFFFFAA00);
         }
         String detail = expectedVersion.isEmpty()
@@ -2443,13 +2438,10 @@ public class MainActivity extends AppCompatActivity {
         if (actuallySuccess) {
             updateResourcesStatus();
             // Bảng debug (ls -laR, log cp...) chỉ hữu ích lúc mình tự dò lỗi — người
-            // dùng thường không cần thấy, chỉ làm rối dialog "Thành công". Chỉ hiện
-            // đầy đủ debug khi build ở buildType debug; bản release chỉ báo gọn.
-            if (BuildConfig.DEBUG) {
-                showScrollableDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.\n\n─── Debug info ───\n" + debugInfo);
-            } else {
-                showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
-            }
+            // dùng thường không cần thấy, chỉ làm rối dialog "Thành công". KHÔNG dựa
+            // vào BuildConfig.DEBUG nữa (mọi bản build ở đây đều đến tay người dùng
+            // thật, không có "bản riêng cho mình" nào) — luôn hiện bản gọn.
+            showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
         } else if (!isCurrentResourcesFixed()) {
             // Lý do phổ biến nhất khiến copy thất bại/không xác minh được là do
             // Resources chưa từng được Fix (thư mục Config/marker chưa tồn tại) —

@@ -1,4 +1,4 @@
-package com.modinstaller;
+package com.modninstaller.kgvn;
 
 // ═══════════════════════════════════════════════════════════════════
 // 🔧 THÊM TOOL MỚI Ở ĐÂY — CHỈ CẦN THÊM 1 DÒNG, KHÔNG CẦN SỬA GÌ KHÁC
