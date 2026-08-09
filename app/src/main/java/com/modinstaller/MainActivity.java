@@ -55,6 +55,14 @@ public class MainActivity extends AppCompatActivity {
     private static final int SHIZUKU_PERMISSION_CODE = 100;
     private static final int STORAGE_PERMISSION_CODE = 101;
     private boolean isLegacyMode = false; // Android <= 10: dùng File API thường
+    // onResume() LUÔN tự chạy ngay sau onCreate() (vòng đời Android mặc định),
+    // trong khi onCreate() đã tự gọi checkShizukuAndInit() rồi — nếu onResume()
+    // gọi lại y hệt hàm đó ngay lần đầu tiên này, sẽ chạy TRÙNG 2 chuỗi
+    // check/init song song (gây nhảy lung tung Đã Fix/Chưa Fix do 2 lượt check
+    // Resources hoàn thành ở 2 thời điểm khác nhau). Cờ này để CHỈ bỏ qua đúng
+    // lần resume đầu tiên đó, các lần resume THẬT SỰ sau này (quay lại từ
+    // Shizuku, từ WebView...) vẫn check lại bình thường.
+    private boolean isFirstResume = true;
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
     private static final String ANNOUNCEMENT_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/announcement.txt";
     // "latest" release trên GitHub luôn có đúng 1 bản (workflow xoá bản "latest" cũ
@@ -479,30 +487,24 @@ public class MainActivity extends AppCompatActivity {
         // trạng thái thực tế ngay lúc này.
         refreshShizukuStatus();
 
-        // Cùng lý do: 2 lỗi dưới đây trước kia đều chỉ chạy 1 lần ở onCreate.
-        // 1) checkAnnouncement(): nếu người dùng mở lại app đang chạy sẵn (không
-        //    cold-start), onCreate() không chạy lại → sửa announcement.txt trên
-        //    repo xong app không bao giờ biết để hiện thông báo mới.
+        // checkAnnouncement(): nếu người dùng mở lại app đang chạy sẵn (không cold-start),
+        // onCreate() không chạy lại → sửa announcement.txt trên repo xong app không bao
+        // giờ biết để hiện thông báo mới.
         checkAnnouncement();
 
-        // 2) checkMaintenanceMode(): nếu lần chạy shell đầu tiên (lúc cold-start)
-        //    vô tình xảy ra ngay khi Shizuku/rish chưa kịp sẵn sàng hoàn toàn, lệnh
-        //    ls/cat có thể fail trong im lặng → activeVersionFolder bị "đóng băng"
-        //    ở giá trị null (hiện "Chưa Fix" sai) suốt cả phiên, dù Resources thực
-        //    tế vẫn đúng — đây chính là lý do "lúc hiện Đã Fix, lúc hiện Chưa Fix"
-        //    dù Resources không hề đổi. Re-check mỗi lần resume để tự phục hồi.
-        if (isShizukuReadyNow()) {
-            // Nếu Shizuku vừa "tỉnh" sau khi người dùng mở nó theo dialog mời ở
-            // checkShizukuAndInit(), app CHƯA từng chạy xong initRish()/fetchConfig()
-            // ở cold-start (vì lúc đó Shizuku chưa sẵn sàng) → resourcesUrl vẫn null.
-            // Chỉ gọi checkMaintenanceMode() trong TH đó sẽ không có gì để so sánh.
-            // Phải chạy lại từ đầu chuỗi init để "tự nhận lại" đúng như đã hứa,
-            // không bắt người dùng phải tự bấm thêm gì.
-            if (resourcesUrl == null) {
-                executor.execute(this::initRishOrDirect);
-            } else {
-                checkMaintenanceMode();
-            }
+        // checkShizukuAndInit(): cùng lý do như refreshShizukuStatus() ở trên — Shizuku có
+        // thể bị tắt ngầm SAU KHI app đã mở, không chỉ lúc cold-start. Gọi lại đúng hàm này
+        // (không viết logic riêng) để tận dụng nguyên bộ check pingBinder()/quyền/dialog
+        // mời mở Shizuku đã có sẵn trong nó, thay vì phải tự viết lại 1 bản rút gọn (bản
+        // rút gọn cũ đã BỎ SÓT bước check pingBinder(), khiến dialog mời mở Shizuku không
+        // bao giờ hiện lại sau lần đầu, và còn gây chạy trùng 2 chuỗi init song song ngay
+        // ở lần resume đầu tiên — chính là nguyên nhân gây nhảy lung tung Đã Fix/Chưa Fix
+        // dù Resources trên máy không đổi). CHỈ bỏ qua đúng lần resume đầu tiên (ngay sau
+        // onCreate) vì onCreate đã tự gọi checkShizukuAndInit() rồi.
+        if (isFirstResume) {
+            isFirstResume = false;
+        } else {
+            checkShizukuAndInit();
         }
 
         // Check cập nhật — cũng chạy lại mỗi lần resume, không chỉ lúc cold-start,
