@@ -152,6 +152,19 @@ public class WebViewActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.webview_progress);
         webView = findViewById(R.id.webview);
 
+        // Chỉ cho phép WebView này điều hướng trong ĐÚNG domain của trang ban đầu
+        // (VD: chỉ ở lại mapinity.onrender.com, không cho nhảy qua domain khác dù
+        // trang đó có quảng cáo/link dẫn đi đâu). Link ngoài domain sẽ mở bằng
+        // trình duyệt/app ngoài, không load trong WebView của app — vì WebView có
+        // "cửa" AndroidBlobDownload cho phép JS ra lệnh lưu file, không nên để bất
+        // kỳ trang lạ nào cũng gọi được cửa đó.
+        String allowedHost = null;
+        try {
+            if (url != null) allowedHost = Uri.parse(url).getHost();
+        } catch (Exception ignored) {
+        }
+        final String lockedHost = allowedHost;
+
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -164,6 +177,25 @@ public class WebViewActivity extends AppCompatActivity {
         webView.addJavascriptInterface(new BlobDownloadInterface(), "AndroidBlobDownload");
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, android.webkit.WebResourceRequest request) {
+                Uri target = request.getUrl();
+                String targetHost = target.getHost();
+                // Cùng domain (hoặc domain con của nó) → cho load tiếp bình thường
+                // trong WebView. Khác domain → không load trong app, mở bằng
+                // trình duyệt/app ngoài máy để không lộ "cửa" AndroidBlobDownload
+                // cho trang lạ.
+                if (lockedHost == null || targetHost == null
+                        || targetHost.equals(lockedHost) || targetHost.endsWith("." + lockedHost)) {
+                    return false;
+                }
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, target));
+                } catch (Exception ignored) {
+                }
+                return true;
+            }
+
             @Override
             public void onPageFinished(WebView view, String pageUrl) {
                 super.onPageFinished(view, pageUrl);
@@ -395,6 +427,15 @@ public class WebViewActivity extends AppCompatActivity {
         webView.evaluateJavascript(js, null);
     }
 
+    // Đường dẫn + thời gian tạo mod .zip VỪA tải xong qua WebView — LƯU RA
+    // SharedPreferences (đĩa) chứ không phải biến static trong RAM, vì nếu
+    // người dùng tắt hẳn app (vuốt khỏi Recents) sau khi tải mod, tiến trình
+    // bị hệ điều hành giết, biến static sẽ mất trắng — lúc đó TH1 (tải xong
+    // tắt app, lần sau mở lại vẫn phải hỏi) sẽ không hoạt động nếu chỉ dùng
+    // static. SharedPreferences thì sống sót qua việc tắt/mở lại app.
+    static final String PREFS_NAME = "pending_mod_prefs";
+    static final String KEY_PENDING_MOD_PATH = "pending_mod_path";
+
     private class BlobDownloadInterface {
         @JavascriptInterface
         public void saveBlobFile(String base64Data, String suggestedName) {
@@ -409,6 +450,16 @@ public class WebViewActivity extends AppCompatActivity {
                 File outFile = new File(downloadDir, suggestedName);
                 try (FileOutputStream fos = new FileOutputStream(outFile)) {
                     fos.write(fileBytes);
+                }
+
+                // Chỉ đánh dấu "mod vừa tải" cho file .zip — interface này CHỈ được
+                // dùng để tải mod (không dùng cho việc khác trong app), nhưng vẫn
+                // check đuôi file cho chắc, phòng web tool sau này tải thêm loại
+                // file khác (ảnh preview, log...) qua cùng interface.
+                if (suggestedName != null && suggestedName.toLowerCase().endsWith(".zip")) {
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putString(KEY_PENDING_MOD_PATH, outFile.getAbsolutePath())
+                        .apply();
                 }
 
                 runOnUiThread(() -> Toast.makeText(WebViewActivity.this,

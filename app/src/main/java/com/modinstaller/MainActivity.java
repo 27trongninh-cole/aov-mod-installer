@@ -48,9 +48,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-
 import rikka.shizuku.Shizuku;
 
 public class MainActivity extends AppCompatActivity {
@@ -85,8 +82,12 @@ public class MainActivity extends AppCompatActivity {
     // legacy) — mọi thao tác đọc/ghi backup phải qua getBackupPath(), không dùng
     // hằng số path cố định nữa.
     private static final String PREF_BACKUP_FOLDER_NAME = "backup_folder_name";
-    private static final String MARKER_FIXED = "4fei6x96e66696e697479";
-    private static final String MARKER_MODDED = "4e696e66696e697m4o7d9";
+    // Trước đây file này không có phần mở rộng và rỗng (tạo bằng touch) —
+    // dễ bị hệ thống/app quét file coi là "file rác/lỗi" rồi tự xoá. Đổi
+    // sang tên có đuôi .txt + có nội dung thật bên trong để tránh bị nhận
+    // nhầm là file rỗng.
+    private static final String MARKER_FIXED = "ExtensionLimit.txt";
+    private static final String MARKER_CONTENT = "© Ninfinity 2026. All rights reserved.";
     private static final String VERSION_FILE_NAME = "version.txt";
     private static final String PREF_RESOURCES_VERSION_TXT = "resources_version_txt";
     private static final String PREF_RESOURCES_VERSION_FOLDER = "resources_version_folder";
@@ -484,13 +485,60 @@ public class MainActivity extends AppCompatActivity {
         //    tế vẫn đúng — đây chính là lý do "lúc hiện Đã Fix, lúc hiện Chưa Fix"
         //    dù Resources không hề đổi. Re-check mỗi lần resume để tự phục hồi.
         if (isShizukuReadyNow()) {
-            checkMaintenanceMode();
+            // Nếu Shizuku vừa "tỉnh" sau khi người dùng mở nó theo dialog mời ở
+            // checkShizukuAndInit(), app CHƯA từng chạy xong initRish()/fetchConfig()
+            // ở cold-start (vì lúc đó Shizuku chưa sẵn sàng) → resourcesUrl vẫn null.
+            // Chỉ gọi checkMaintenanceMode() trong TH đó sẽ không có gì để so sánh.
+            // Phải chạy lại từ đầu chuỗi init để "tự nhận lại" đúng như đã hứa,
+            // không bắt người dùng phải tự bấm thêm gì.
+            if (resourcesUrl == null) {
+                executor.execute(this::initRishOrDirect);
+            } else {
+                checkMaintenanceMode();
+            }
         }
 
         // Check cập nhật — cũng chạy lại mỗi lần resume, không chỉ lúc cold-start,
         // để nếu người dùng bấm "Để sau" rồi vẫn ở trong app lâu, hoặc quay lại app
         // sau khi có bản mới, đều được nhắc đúng lúc.
         checkForUpdate();
+
+        // Vừa quay lại từ WebView sau khi tải mod xong (tín hiệu trực tiếp từ
+        // saveBlobFile, không phải quét thư mục) → mời cài luôn, đỡ phải tự bấm
+        // "Cài Mod" rồi chọn lại đúng file vừa tải.
+        checkPendingModFromWebView();
+    }
+
+    private void checkPendingModFromWebView() {
+        android.content.SharedPreferences prefs =
+            getSharedPreferences(WebViewActivity.PREFS_NAME, MODE_PRIVATE);
+        String path = prefs.getString(WebViewActivity.KEY_PENDING_MOD_PATH, null);
+        if (path == null) return;
+        // Xoá ngay khi đọc — dù người dùng chọn "Cài ngay" hay "Để sau", dialog
+        // này chỉ hỏi 1 LẦN cho đúng 1 mod đã tải, không hỏi lặp lại ở lần mở
+        // app/quay lại kế tiếp cho cùng file đó.
+        prefs.edit().remove(WebViewActivity.KEY_PENDING_MOD_PATH).apply();
+
+        File modFile = new File(path);
+        if (!modFile.exists()) return; // phòng TH file bị xoá/di chuyển trước khi kịp hỏi
+
+        String createdTime = new java.text.SimpleDateFormat("HH:mm dd/MM/yyyy", java.util.Locale.getDefault())
+            .format(new java.util.Date(modFile.lastModified()));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("📦 Phát hiện mod vừa tải")
+            .setMessage("Tên file: " + modFile.getName()
+                + "\nThời gian tạo: " + createdTime
+                + "\n\nCài ngay?")
+            .setPositiveButton("Cài ngay", (d, w) -> {
+                setButtonsEnabled(false);
+                showProgress(true);
+                executor.execute(() -> installMod(Uri.fromFile(modFile)));
+            })
+            .setNegativeButton("Để sau", null)
+            .create();
+        styleDialog(dialog);
+        dialog.show();
     }
 
     // Kiểm tra Shizuku có đang thực sự sẵn sàng ngay lúc này hay không (không tự
@@ -552,8 +600,11 @@ public class MainActivity extends AppCompatActivity {
             isLegacyMode = false;
             if (!Shizuku.pingBinder()) {
                 updateShizukuStatus(false);
-                showToast("Shizuku chưa chạy. Hãy mở Shizuku và bấm Start.");
-                hideLoadingOverlay(); // không chờ tiếp — người dùng cần thấy UI để tự mở Shizuku
+                hideLoadingOverlay(); // không chờ tiếp — người dùng cần thấy UI để thao tác
+                // Trước đây chỉ hiện Toast rồi im, người dùng phải tự nhớ đường mở
+                // Shizuku thủ công. Giờ chủ động mời mở luôn — Toast dễ bị lướt
+                // qua/không đọc kịp, còn dialog thì phải bấm mới tắt được.
+                showShizukuAsleepDialog();
                 return;
             }
             if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
@@ -737,47 +788,14 @@ public class MainActivity extends AppCompatActivity {
         overridePendingTransition(R.anim.slide_up_in, R.anim.stay_still);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 🔧 THÊM TOOL MỚI Ở ĐÂY — CHỈ CẦN THÊM 1 DÒNG, KHÔNG CẦN SỬA GÌ KHÁC
-    // ═══════════════════════════════════════════════════════════════════
-    // Mỗi dòng bên dưới là 1 thẻ (card) sẽ tự động hiện trong khu "Công cụ
-    // khác". Copy nguyên 1 dòng bất kỳ, dán xuống dưới, rồi đổi 4 chỗ trong
-    // dấu ngoặc kép — xong, không cần đụng tới file XML hay bất kỳ chỗ nào
-    // khác trong file này.
-    //
-    //     new ToolItem("Icon", "Tên hiển thị", "Mô tả ngắn", "Link webtool"),
-    //
-    // Icon: 1 emoji bất kỳ, ví dụ "🗺️" "⚡" "🎥" "🏛️"
-    // Tên hiển thị: tên tool, ví dụ "FPS Cao"
-    // Mô tả ngắn: 1 dòng phụ đề nhỏ bên dưới tên
-    // Link webtool: địa chỉ web sẽ mở ra khi bấm vào thẻ đó
-    //
-    // Nếu tool CHƯA có link thật (chỉ muốn để chỗ trước), điền link bất kỳ,
-    // ví dụ "coming_soon" — khi bấm sẽ tự hiện thông báo "Đang phát triển"
-    // thay vì cố mở web.
-    private static final ToolItem[] OTHER_TOOLS = {
-        new ToolItem("🗺️", "Map Texture Tool", "Thay thế texture bản đồ", "https://mapinity.onrender.com"),
-        new ToolItem("📷", "Camera Xa", "Tạo file Camera tuỳ chỉnh", "https://camerinity.onrender.com"),
-        // new ToolItem("🏛️", "Mod Sảnh", "Tùy chỉnh giao diện sảnh chờ", "coming_soon"),
-    };
-
-    // Cấu trúc dữ liệu cho 1 tool — không cần hiểu dòng này, chỉ cần biết nó
-    // giữ đúng 4 thông tin ở trên.
-    private static class ToolItem {
-        final String icon, title, subtitle, url;
-        ToolItem(String icon, String title, String subtitle, String url) {
-            this.icon = icon; this.title = title; this.subtitle = subtitle; this.url = url;
-        }
-    }
-
-    // Tự động tạo UI thẻ cho từng tool trong OTHER_TOOLS ở trên, đổ vào
-    // container_other_tools (activity_main.xml) — code này KHÔNG cần sửa khi
-    // thêm tool mới, chỉ cần sửa danh sách OTHER_TOOLS phía trên.
+    // Danh sách tool ("Công cụ khác") giờ nằm ở file riêng ToolsConfig.java —
+    // muốn thêm/sửa tool, mở file đó, KHÔNG sửa ở đây. Tách ra để các lần
+    // cập nhật MainActivity sau này không đụng/mất danh sách tool của bạn.
     private void populateOtherTools() {
         LinearLayout container = findViewById(R.id.container_other_tools);
         int density = (int) getResources().getDisplayMetrics().density;
 
-        for (ToolItem tool : OTHER_TOOLS) {
+        for (ToolsConfig.ToolItem tool : ToolsConfig.OTHER_TOOLS) {
             androidx.cardview.widget.CardView card = new androidx.cardview.widget.CardView(this);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -1191,6 +1209,25 @@ public class MainActivity extends AppCompatActivity {
     // thay vì chỉ OK, theo đúng hướng CÓ XIN PHÉP người dùng (không tự động mở
     // app khác trong im lặng — tránh gây khó hiểu/giật mình khi màn hình tự
     // nhảy qua app khác không báo trước).
+    // Hiện khi mở app mà Shizuku chưa "Start" / đang bị hệ điều hành tắt ngầm
+    // (pingBinder() == false) — chủ động mời mở Shizuku ngay lúc đó thay vì
+    // chỉ báo bằng Toast rồi để người dùng tự tìm cách mở. Vẫn CÓ XIN PHÉP
+    // (người dùng tự bấm nút), không tự động nhảy app trong im lặng.
+    private void showShizukuAsleepDialog() {
+        mainHandler.post(() -> {
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("🔌 Shizuku chưa chạy")
+                .setMessage("Cần mở Shizuku và bấm Start trước khi dùng app.\n\n"
+                    + "Bấm \"Mở Shizuku\" bên dưới, bấm Start ở đó, rồi quay lại app này "
+                    + "(app sẽ tự nhận lại, không cần bấm thêm gì).")
+                .setPositiveButton("Mở Shizuku", (d, w) -> openShizukuApp())
+                .setNegativeButton("Để sau", null)
+                .create();
+            styleDialog(dialog);
+            dialog.show();
+        });
+    }
+
     private void showShizukuTimeoutDialog() {
         mainHandler.post(() -> {
             AlertDialog dialog = new AlertDialog.Builder(this)
@@ -1758,7 +1795,7 @@ public class MainActivity extends AppCompatActivity {
                 String versionFolderForMarker = !resourcesVersionFolder.isEmpty()
                     ? resourcesVersionFolder : gameVersion;
                 String configPath = RESOURCES_PATH + "/" + versionFolderForMarker + "/Config";
-                runShell("mkdir -p \"" + configPath + "\" && rm -f \"" + configPath + "/" + MARKER_MODDED + "\" && touch \"" + configPath + "/" + MARKER_FIXED + "\"");
+                runShell("mkdir -p \"" + configPath + "\" && echo \"" + MARKER_CONTENT + "\" > \"" + configPath + "/" + MARKER_FIXED + "\"");
             }
 
             updateProgressDialog("Hoàn tất!", 100);
@@ -2316,7 +2353,14 @@ public class MainActivity extends AppCompatActivity {
 
         if (actuallySuccess) {
             updateResourcesStatus();
-            showScrollableDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.\n\n─── Debug info ───\n" + debugInfo);
+            // Bảng debug (ls -laR, log cp...) chỉ hữu ích lúc mình tự dò lỗi — người
+            // dùng thường không cần thấy, chỉ làm rối dialog "Thành công". Chỉ hiện
+            // đầy đủ debug khi build ở buildType debug; bản release chỉ báo gọn.
+            if (BuildConfig.DEBUG) {
+                showScrollableDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.\n\n─── Debug info ───\n" + debugInfo);
+            } else {
+                showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
+            }
         } else if (!isCurrentResourcesFixed()) {
             // Lý do phổ biến nhất khiến copy thất bại/không xác minh được là do
             // Resources chưa từng được Fix (thư mục Config/marker chưa tồn tại) —
@@ -2518,11 +2562,11 @@ public class MainActivity extends AppCompatActivity {
         boolean cpOverwriteOk = cpOverwriteResult.contains("EXIT_CODE_IS_0_HERE");
         log.append("8️⃣ cp -r ĐÈ LẦN 2 lên thư mục đã có file → ").append(cpOverwriteOk ? "✅ exit 0" : "❌ " + cpOverwriteResult).append("\n\n");
 
-        // Bước 9: test ĐÚNG TÊN FILE thật đang gây lỗi (4e696e66696e697m4o7d9)
-        // để cô lập xem có phải chính cái tên này có vấn đề, không liên quan
+        // Bước 9: test tên file kiểu file marker thật (không dấu, có đuôi .txt)
+        // để cô lập xem có phải chính kiểu tên này có vấn đề, không liên quan
         // gì đến kích thước, thứ tự copy, hay cấu trúc thư mục.
         String markerTestDir = testBase + "/marker_test/Config";
-        String markerFileName = MARKER_MODDED; // "4e696e66696e697m4o7d9"
+        String markerFileName = "ExtensionLimit.txt";
         String directCreate = runShellOutput(
             "mkdir -p \"" + markerTestDir + "\" && echo 'Mod map cùng Ninfinity' > \"" + markerTestDir + "/" + markerFileName + "\" 2>&1; echo EXIT_CODE_IS_$?_HERE");
         boolean directCreateOk = directCreate.contains("EXIT_CODE_IS_0_HERE");
@@ -2717,37 +2761,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ─── Helper: Unzip ────────────────────────────────────────────
-
-    private void unzip(File zipFile, File destDir) throws IOException {
-        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFile))) {
-            extractZip(zis, destDir);
-        }
-    }
-
-    private void unzipFromUri(Uri uri, File destDir) throws IOException {
-        try (InputStream is = getContentResolver().openInputStream(uri);
-             ZipInputStream zis = new ZipInputStream(is)) {
-            extractZip(zis, destDir);
-        }
-    }
-
-    private void extractZip(ZipInputStream zis, File destDir) throws IOException {
-        ZipEntry entry;
-        while ((entry = zis.getNextEntry()) != null) {
-            File outFile = new File(destDir, entry.getName());
-            if (entry.isDirectory()) {
-                outFile.mkdirs();
-            } else {
-                outFile.getParentFile().mkdirs();
-                try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = zis.read(buf)) > 0) fos.write(buf, 0, len);
-                }
-            }
-            zis.closeEntry();
-        }
-    }
+    // (Đã xoá 3 hàm unzip()/unzipFromUri()/extractZip() kiểu cũ dùng
+    // ZipInputStream thuần — không dùng nữa từ khi chuyển sang Zip4j
+    // (extractZipWithZip4j), và bản cũ không kiểm tra "zip slip"
+    // [entry.getName() chứa "../"], nguy cơ ghi file ra ngoài thư mục đích
+    // nếu lỡ được gọi lại. Không còn nơi nào trong app gọi 3 hàm này.)
 
     private void deleteDir(File dir) {
         if (dir.isDirectory()) {
