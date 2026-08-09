@@ -1100,6 +1100,47 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Package name chính thức của app Shizuku — dùng để tự mở app này lên khi
+    // phát hiện nó bị hệ điều hành "đóng băng" (đưa lên foreground sẽ tự động
+    // "rã đông" tiến trình, Android chỉ treo tiến trình chạy NỀN).
+    private static final String SHIZUKU_PACKAGE = "moe.shizuku.privileged.api";
+
+    // Dialog riêng cho trường hợp Shizuku bị treo/timeout — có nút "Mở Shizuku"
+    // thay vì chỉ OK, theo đúng hướng CÓ XIN PHÉP người dùng (không tự động mở
+    // app khác trong im lặng — tránh gây khó hiểu/giật mình khi màn hình tự
+    // nhảy qua app khác không báo trước).
+    private void showShizukuTimeoutDialog() {
+        mainHandler.post(() -> {
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("🔌 Mất kết nối Shizuku")
+                .setMessage("App không hỏi được Shizuku (bị hệ điều hành tự tắt ngầm để tiết kiệm pin) — "
+                    + "KHÔNG phải do Resources sai phiên bản.\n\n"
+                    + "Bấm \"Mở Shizuku\" bên dưới để đánh thức lại, rồi quay lại app này — "
+                    + "trạng thái sẽ tự đúng lại, không cần làm gì thêm.\n\n"
+                    + "Nếu vẫn còn lặp lại nhiều lần, vào Cài đặt → Pin → tắt tối ưu hóa pin cho "
+                    + "CẢ 2 app: Mod Ninstaller và Shizuku.")
+                .setPositiveButton("Mở Shizuku", (d, w) -> openShizukuApp())
+                .setNegativeButton("Để sau", null)
+                .create();
+            styleDialog(dialog);
+            dialog.show();
+        });
+    }
+
+    // Mở app Shizuku lên foreground — Android chỉ đóng băng tiến trình chạy nền,
+    // nên thao tác này thường đủ để "đánh thức" lại kết nối. Không tự động nhảy
+    // ngược về Mod Ninstaller sau đó — để người dùng tự bấm nút Home/Back quay
+    // lại khi thấy Shizuku đã hiện trạng thái "Running" (giữ đúng tinh thần "có
+    // xin phép", không tự ý điều khiển focus qua lại giữa các app).
+    private void openShizukuApp() {
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(SHIZUKU_PACKAGE);
+        if (launchIntent != null) {
+            startActivity(launchIntent);
+        } else {
+            showToast("Không tìm thấy app Shizuku trên máy. Vui lòng cài đặt lại.");
+        }
+    }
+
     private void setMaintenanceUI(boolean maintenance, String expectedVersion, String debugSnapshot) {
         // Phát hiện trường hợp "anh bảo vệ Shizuku đang ngủ gật" (app Shizuku bị hệ
         // điều hành tự tắt ngầm để tiết kiệm pin, khiến lệnh hỏi kho bị timeout) —
@@ -1117,13 +1158,7 @@ public class MainActivity extends AppCompatActivity {
                 tvResourcesStatus.setText("🔌 Mất kết nối");
                 tvResourcesStatus.setTextColor(0xFFFF6666);
             }
-            showDialog("🔌 Mất kết nối Shizuku",
-                "App không hỏi được Shizuku (bị hệ điều hành tự tắt ngầm để tiết kiệm pin) — "
-                + "KHÔNG phải do Resources sai phiên bản.\n\n"
-                + "Cách khắc phục:\n"
-                + "1. Mở lại app Shizuku 1 lần cho nó \"tỉnh\" lại\n"
-                + "2. Vào Cài đặt → Pin → tắt tối ưu hóa pin cho CẢ 2 app: Mod Ninstaller và Shizuku\n\n"
-                + "Sau đó quay lại đây, trạng thái sẽ tự đúng lại, không cần làm gì thêm.");
+            showShizukuTimeoutDialog();
             return;
         }
 
