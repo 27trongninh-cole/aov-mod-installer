@@ -539,4 +539,44 @@
         android:clickable="true"
         android:focusable="true" />
 
+    <!-- Overlay loading khi khởi động app — che toàn bộ UI trong lúc app chạy
+         chuỗi kiểm tra đầu tiên (Shizuku sẵn sàng → tải config → check bảo
+         trì/version, kể cả các lần thử lại nếu Shizuku "ngủ gật"). Tự ẩn khi
+         xong, hoặc tự ẩn sau timeout an toàn nếu có gì bất thường kéo dài quá
+         lâu — không để người dùng bị kẹt màn hình loading vĩnh viễn.
+         Đặt SAU CÙNG trong FrameLayout để luôn nằm trên cùng, che hết mọi thứ
+         phía dưới; clickable=true để chặn luôn thao tác chạm xuyên qua trong
+         lúc đang loading. -->
+    <LinearLayout
+        android:id="@+id/layout_loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#1a1a2e"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="visible">
+
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:src="@mipmap/ic_launcher"
+            android:layout_marginBottom="24dp" />
+
+        <ProgressBar
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:indeterminateTint="#e94560"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/tv_loading_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Đang kiểm tra kết nối..."
+            android:textColor="#888899"
+            android:textSize="13sp" />
+    </LinearLayout>
+
 </FrameLayout>

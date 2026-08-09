@@ -98,6 +98,9 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private TextView tvGameVersion;
     private TextView tvResourcesStatus;
+    private View layoutLoadingOverlay;
+    private TextView tvLoadingStatus;
+    private volatile boolean loadingOverlayHidden = false;
 
     // Progress dialog
     private AlertDialog progressDialog;
@@ -130,6 +133,7 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     updateShizukuStatus(false);
                     showToast("Shizuku từ chối quyền. Vui lòng thử lại.");
+                    hideLoadingOverlay(); // không chờ tiếp — người dùng cần thấy UI để tự cấp lại quyền
                 }
             }
         };
@@ -159,6 +163,14 @@ public class MainActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progress_bar);
         tvGameVersion = findViewById(R.id.tv_game_version);
         tvResourcesStatus = findViewById(R.id.tv_resources_status);
+        layoutLoadingOverlay = findViewById(R.id.layout_loading_overlay);
+        tvLoadingStatus = findViewById(R.id.tv_loading_status);
+
+        // An toàn: nếu chuỗi kiểm tra khởi động (Shizuku → config → bảo trì/version)
+        // vì lý do gì đó không hoàn tất (mạng quá chậm, lỗi bất thường...), tự ẩn
+        // overlay sau tối đa 12s — không để người dùng bị kẹt màn hình loading
+        // vĩnh viễn không thao tác được gì.
+        mainHandler.postDelayed(this::hideLoadingOverlay, 12000);
 
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
 
@@ -502,6 +514,27 @@ public class MainActivity extends AppCompatActivity {
 
     // ─── Shizuku ────────────────────────────────────────────────
 
+    // Ẩn overlay loading — an toàn khi gọi nhiều lần (chỉ ẩn thật sự 1 lần đầu
+    // tiên), dùng chung cho cả đường "hoàn tất bình thường" lẫn timeout an toàn.
+    private void hideLoadingOverlay() {
+        if (loadingOverlayHidden) return;
+        loadingOverlayHidden = true;
+        mainHandler.post(() -> {
+            if (layoutLoadingOverlay == null) return;
+            layoutLoadingOverlay.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .withEndAction(() -> layoutLoadingOverlay.setVisibility(View.GONE))
+                .start();
+        });
+    }
+
+    private void updateLoadingStatus(String text) {
+        mainHandler.post(() -> {
+            if (tvLoadingStatus != null) tvLoadingStatus.setText(text);
+        });
+    }
+
     private void checkShizukuAndInit() {
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
             // Android 10 trở xuống: dùng File API thường
@@ -522,6 +555,7 @@ public class MainActivity extends AppCompatActivity {
             if (!Shizuku.pingBinder()) {
                 updateShizukuStatus(false);
                 showToast("Shizuku chưa chạy. Hãy mở Shizuku và bấm Start.");
+                hideLoadingOverlay(); // không chờ tiếp — người dùng cần thấy UI để tự mở Shizuku
                 return;
             }
             if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
@@ -543,6 +577,7 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 updateShizukuStatus(false);
                 showToast("Cần quyền truy cập storage để sử dụng app!");
+                hideLoadingOverlay();
             }
         }
     }
@@ -789,6 +824,7 @@ public class MainActivity extends AppCompatActivity {
             fetchConfig();
         } catch (Exception e) {
             showToast("Lỗi khởi tạo rish: " + e.getMessage());
+            hideLoadingOverlay(); // lỗi ngay từ bước đầu — không giữ overlay chờ vô ích
         }
     }
 
@@ -967,6 +1003,7 @@ public class MainActivity extends AppCompatActivity {
                     setMaintenanceUI(false, "", "");
                     applyResourcesStatusUI(fixed);
                 });
+                hideLoadingOverlay();
                 return;
             }
 
@@ -986,6 +1023,7 @@ public class MainActivity extends AppCompatActivity {
             // vẫn rỗng sau vài lần thử mới thật sự tin là rỗng.
             int retriesLeft = 2;
             while (rawOutput.trim().isEmpty() && retriesLeft > 0) {
+                updateLoadingStatus("Đang thử kết nối lại với Shizuku...");
                 try { Thread.sleep(400); } catch (InterruptedException ignored) {}
                 resourcesPathExists = fileExists(RESOURCES_PATH);
                 rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
@@ -1037,6 +1075,7 @@ public class MainActivity extends AppCompatActivity {
                     applyResourcesStatusUI(fixed);
                 }
             });
+            hideLoadingOverlay();
         });
     }
 
@@ -1062,26 +1101,49 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setMaintenanceUI(boolean maintenance, String expectedVersion, String debugSnapshot) {
+        // Phát hiện trường hợp "anh bảo vệ Shizuku đang ngủ gật" (app Shizuku bị hệ
+        // điều hành tự tắt ngầm để tiết kiệm pin, khiến lệnh hỏi kho bị timeout) —
+        // đây KHÔNG phải Resources thật sự sai phiên bản, nên không nên gộp chung
+        // vào chữ "Bảo trì" (dễ hiểu lầm là do Ninfinity chưa cập nhật kịp).
+        boolean isShizukuTimeout = debugSnapshot != null
+            && debugSnapshot.contains("Request timeout")
+            && debugSnapshot.contains("Shizuku");
+
         setButtonsEnabled(!maintenance);
-        if (maintenance) {
+        if (!maintenance) return;
+
+        if (isShizukuTimeout) {
             if (tvResourcesStatus != null) {
-                tvResourcesStatus.setText("🚧 Bảo trì");
-                tvResourcesStatus.setTextColor(0xFFFFAA00);
+                tvResourcesStatus.setText("🔌 Mất kết nối");
+                tvResourcesStatus.setTextColor(0xFFFF6666);
             }
-            String detail = expectedVersion.isEmpty()
-                ? "Không tìm thấy phiên bản Resources phù hợp trong dữ liệu game hiện tại."
-                : "Dữ liệu game hiện tại không khớp với bản Resources đã Fix (" + expectedVersion + ").";
-            // Log debug (nội dung version.txt thật đọc được ở từng thư mục quét qua)
-            // — giúp phân biệt 2 trường hợp: (1) đọc được nhưng nội dung thực sự khác
-            // (đúng là cần Fix lại), hay (2) không đọc được gì cả (rất có thể do quyền
-            // Shizuku/rish chưa sẵn sàng đúng lúc gọi — false positive, không phải lỗi
-            // thật). Nếu thấy toàn "(rỗng/không đọc được)" dù bạn chắc chắn game đúng
-            // bản, đó là dấu hiệu (2), thử mở lại app hoặc bấm Fix Resources lại xem
-            // còn báo bảo trì không.
-            String debugSection = "\n\n[Debug]\n" + debugSnapshot.trim() + "\n\nKỳ vọng version.txt: " + resourcesVersionTxt;
-            showDialog("🚧 Đang bảo trì",
-                detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!" + debugSection);
+            showDialog("🔌 Mất kết nối Shizuku",
+                "App không hỏi được Shizuku (bị hệ điều hành tự tắt ngầm để tiết kiệm pin) — "
+                + "KHÔNG phải do Resources sai phiên bản.\n\n"
+                + "Cách khắc phục:\n"
+                + "1. Mở lại app Shizuku 1 lần cho nó \"tỉnh\" lại\n"
+                + "2. Vào Cài đặt → Pin → tắt tối ưu hóa pin cho CẢ 2 app: Mod Ninstaller và Shizuku\n\n"
+                + "Sau đó quay lại đây, trạng thái sẽ tự đúng lại, không cần làm gì thêm.");
+            return;
         }
+
+        if (tvResourcesStatus != null) {
+            tvResourcesStatus.setText("🚧 Bảo trì");
+            tvResourcesStatus.setTextColor(0xFFFFAA00);
+        }
+        String detail = expectedVersion.isEmpty()
+            ? "Không tìm thấy phiên bản Resources phù hợp trong dữ liệu game hiện tại."
+            : "Dữ liệu game hiện tại không khớp với bản Resources đã Fix (" + expectedVersion + ").";
+        // Log debug (nội dung version.txt thật đọc được ở từng thư mục quét qua)
+        // — giúp phân biệt 2 trường hợp: (1) đọc được nhưng nội dung thực sự khác
+        // (đúng là cần Fix lại), hay (2) không đọc được gì cả (rất có thể do quyền
+        // Shizuku/rish chưa sẵn sàng đúng lúc gọi — false positive, không phải lỗi
+        // thật). Nếu thấy toàn "(rỗng/không đọc được)" dù bạn chắc chắn game đúng
+        // bản, đó là dấu hiệu (2), thử mở lại app hoặc bấm Fix Resources lại xem
+        // còn báo bảo trì không.
+        String debugSection = "\n\n[Debug]\n" + debugSnapshot.trim() + "\n\nKỳ vọng version.txt: " + resourcesVersionTxt;
+        showDialog("🚧 Đang bảo trì",
+            detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!" + debugSection);
     }
 
     // ─── Thông báo (announcement) ─────────────────────────────────
@@ -1316,6 +1378,7 @@ public class MainActivity extends AppCompatActivity {
     // ─── Config ──────────────────────────────────────────────────
 
     private void fetchConfig() {
+        updateLoadingStatus("Đang tải cấu hình...");
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(CONFIG_URL).openConnection();
             conn.setConnectTimeout(10000);
@@ -1341,6 +1404,7 @@ public class MainActivity extends AppCompatActivity {
                 if (tvGameVersion != null) tvGameVersion.setText(gameVersionDisplay);
             });
 
+            updateLoadingStatus("Đang kiểm tra Resources...");
             checkMaintenanceMode();
         } catch (Exception e) {
             resourcesUrl = null;
@@ -1348,6 +1412,9 @@ public class MainActivity extends AppCompatActivity {
             mainHandler.post(() -> {
                 if (tvGameVersion != null) tvGameVersion.setText("Không tải được");
             });
+            // Không tải được config → không có gì để so sánh version tiếp theo, dừng
+            // chuỗi kiểm tra tại đây, không giữ overlay loading chờ vô ích tới hết 12s.
+            hideLoadingOverlay();
         }
     }
 
