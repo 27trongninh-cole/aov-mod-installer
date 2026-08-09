@@ -29,6 +29,11 @@ public class WebViewActivity extends AppCompatActivity {
 
     public static final String EXTRA_URL = "extra_url";
     public static final String EXTRA_TITLE = "extra_title";
+    // Phiên bản game hiện tại (đọc từ MainActivity.gameVersion) TẠI THỜI ĐIỂM mở
+    // WebView — dùng để đóng dấu vào mod được tải trong phiên này, phục vụ cảnh
+    // báo lệch phiên bản lúc cài sau này. Có thể rỗng nếu MainActivity chưa xác
+    // định được phiên bản game (VD Shizuku chưa sẵn sàng).
+    public static final String EXTRA_GAME_VERSION = "extra_game_version";
     public static final String DOWNLOAD_SUBFOLDER = "ModNinstaller";
 
     private WebView webView;
@@ -427,7 +432,7 @@ public class WebViewActivity extends AppCompatActivity {
         webView.evaluateJavascript(js, null);
     }
 
-    // Đường dẫn + thời gian tạo mod .zip VỪA tải xong qua WebView — LƯU RA
+    // Đường dẫn + phiên bản game VỪA tải xong qua WebView — LƯU RA
     // SharedPreferences (đĩa) chứ không phải biến static trong RAM, vì nếu
     // người dùng tắt hẳn app (vuốt khỏi Recents) sau khi tải mod, tiến trình
     // bị hệ điều hành giết, biến static sẽ mất trắng — lúc đó TH1 (tải xong
@@ -435,6 +440,14 @@ public class WebViewActivity extends AppCompatActivity {
     // static. SharedPreferences thì sống sót qua việc tắt/mở lại app.
     static final String PREFS_NAME = "pending_mod_prefs";
     static final String KEY_PENDING_MOD_PATH = "pending_mod_path";
+    static final String KEY_PENDING_MOD_VERSION = "pending_mod_version";
+    // "source" phân biệt dialog mời cài sẽ hiện kiểu nào ở MainActivity:
+    // "download" = vừa tải xong (dialog "📦 Phát hiện mod vừa tải...")
+    // "list"     = người dùng tự bấm chọn từ màn "Các Mod đã tạo" (dialog
+    //              "Mod này sẽ được cài vào game. Tiếp tục?")
+    static final String KEY_PENDING_MOD_SOURCE = "pending_mod_source";
+    static final String SOURCE_DOWNLOAD = "download";
+    static final String SOURCE_LIST = "list";
 
     private class BlobDownloadInterface {
         @JavascriptInterface
@@ -442,29 +455,33 @@ public class WebViewActivity extends AppCompatActivity {
             try {
                 byte[] fileBytes = Base64.decode(base64Data, Base64.DEFAULT);
 
-                File downloadDir = new File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    DOWNLOAD_SUBFOLDER);
-                if (!downloadDir.exists()) downloadDir.mkdirs();
-
-                File outFile = new File(downloadDir, suggestedName);
+                // Lưu vào bộ nhớ RIÊNG của app (không phải Download/ công khai nữa) —
+                // chỉ app này đọc/ghi được, không sợ app khác hay người dùng lỡ tay
+                // xoá/di chuyển file trước khi kịp cài.
+                File modsDir = ModManifest.getModsDir(WebViewActivity.this);
+                File outFile = new File(modsDir, suggestedName);
                 try (FileOutputStream fos = new FileOutputStream(outFile)) {
                     fos.write(fileBytes);
                 }
 
-                // Chỉ đánh dấu "mod vừa tải" cho file .zip — interface này CHỈ được
-                // dùng để tải mod (không dùng cho việc khác trong app), nhưng vẫn
-                // check đuôi file cho chắc, phòng web tool sau này tải thêm loại
-                // file khác (ảnh preview, log...) qua cùng interface.
+                // Chỉ đánh dấu "mod vừa tải" + ghi vào manifest cho file .zip —
+                // interface này CHỈ được dùng để tải mod (không dùng cho việc khác
+                // trong app), nhưng vẫn check đuôi file cho chắc, phòng web tool sau
+                // này tải thêm loại file khác (ảnh preview, log...) qua cùng interface.
                 if (suggestedName != null && suggestedName.toLowerCase().endsWith(".zip")) {
+                    String gameVersionNow = getIntent().getStringExtra(EXTRA_GAME_VERSION);
+                    if (gameVersionNow == null) gameVersionNow = "";
+                    ModManifest.addEntry(WebViewActivity.this, suggestedName, gameVersionNow);
+
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                         .putString(KEY_PENDING_MOD_PATH, outFile.getAbsolutePath())
+                        .putString(KEY_PENDING_MOD_VERSION, gameVersionNow)
+                        .putString(KEY_PENDING_MOD_SOURCE, SOURCE_DOWNLOAD)
                         .apply();
                 }
 
                 runOnUiThread(() -> Toast.makeText(WebViewActivity.this,
-                    "Đã lưu: Download/" + DOWNLOAD_SUBFOLDER + "/" + suggestedName,
-                    Toast.LENGTH_LONG).show());
+                    "Đã lưu mod: " + suggestedName, Toast.LENGTH_LONG).show());
 
             } catch (Exception e) {
                 runOnUiThread(() -> Toast.makeText(WebViewActivity.this,

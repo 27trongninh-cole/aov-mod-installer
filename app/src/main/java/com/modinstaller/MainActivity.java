@@ -197,6 +197,13 @@ public class MainActivity extends AppCompatActivity {
             filePickerLauncher.launch(createModFilePickerIntent());
         });
 
+        // Không cần checkShizuku() ở đây — màn "Các Mod đã tạo" chỉ đọc/xoá file
+        // trong bộ nhớ riêng của app, không đụng gì tới thư mục Resources của
+        // game (chỉ khi BẤM CÀI 1 mod trong màn đó mới cần Shizuku, lúc đó
+        // MainActivity sẽ tự check lại qua promptInstallMod/startInstallMod).
+        findViewById(R.id.btn_created_mods).setOnClickListener(v ->
+            startActivity(new Intent(this, CreatedModsActivity.class)));
+
         btnRemoveMod.setOnClickListener(v -> {
             if (!checkShizuku()) return;
             AlertDialog d2 = new AlertDialog.Builder(this)
@@ -514,31 +521,78 @@ public class MainActivity extends AppCompatActivity {
             getSharedPreferences(WebViewActivity.PREFS_NAME, MODE_PRIVATE);
         String path = prefs.getString(WebViewActivity.KEY_PENDING_MOD_PATH, null);
         if (path == null) return;
-        // Xoá ngay khi đọc — dù người dùng chọn "Cài ngay" hay "Để sau", dialog
-        // này chỉ hỏi 1 LẦN cho đúng 1 mod đã tải, không hỏi lặp lại ở lần mở
-        // app/quay lại kế tiếp cho cùng file đó.
-        prefs.edit().remove(WebViewActivity.KEY_PENDING_MOD_PATH).apply();
+        String modVersion = prefs.getString(WebViewActivity.KEY_PENDING_MOD_VERSION, "");
+        String source = prefs.getString(WebViewActivity.KEY_PENDING_MOD_SOURCE, WebViewActivity.SOURCE_DOWNLOAD);
+        // Xoá ngay khi đọc — dù người dùng chọn cài hay không, dialog này chỉ
+        // hỏi 1 LẦN cho đúng 1 mod, không hỏi lặp lại ở lần mở app/quay lại kế tiếp.
+        prefs.edit()
+            .remove(WebViewActivity.KEY_PENDING_MOD_PATH)
+            .remove(WebViewActivity.KEY_PENDING_MOD_VERSION)
+            .remove(WebViewActivity.KEY_PENDING_MOD_SOURCE)
+            .apply();
 
         File modFile = new File(path);
-        if (!modFile.exists()) return; // phòng TH file bị xoá/di chuyển trước khi kịp hỏi
+        if (!modFile.exists()) return; // phòng TH file bị xoá trước khi kịp hỏi
 
-        String createdTime = new java.text.SimpleDateFormat("HH:mm dd/MM/yyyy", java.util.Locale.getDefault())
-            .format(new java.util.Date(modFile.lastModified()));
+        promptInstallMod(modFile, modVersion, WebViewActivity.SOURCE_DOWNLOAD.equals(source));
+    }
+
+    // Dùng chung cho cả 2 lối vào cài mod đã lưu sẵn trong app:
+    //   - fromFreshDownload = true  → vừa tải xong qua WebView (hiện tên + giờ tải)
+    //   - fromFreshDownload = false → người dùng tự bấm chọn 1 dòng trong màn
+    //     "Các Mod đã tạo" (hỏi ngắn gọn "Tiếp tục?")
+    // Cảnh báo lệch phiên bản áp dụng CHUNG cho cả 2 lối vào, vì phiên bản game
+    // lúc TẢI có thể khác phiên bản game lúc CÀI thật sự (người dùng tải rồi để
+    // đó, sau đó game mới cập nhật) — không phải chỉ liên quan tới thời điểm tải.
+    private void promptInstallMod(File modFile, String modGameVersion, boolean fromFreshDownload) {
+        boolean versionKnown = modGameVersion != null && !modGameVersion.isEmpty();
+        boolean versionMismatch = versionKnown && gameVersion != null && !gameVersion.isEmpty()
+            && !modGameVersion.equals(gameVersion);
+
+        if (versionMismatch) {
+            // Cảnh báo quyết liệt hơn hẳn dialog xác nhận thường — không tự chặn
+            // hoàn toàn (người dùng vẫn có thể chủ động chọn cài), nhưng phải hiểu
+            // rõ rủi ro trước khi bấm.
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("⚠️ CẢNH BÁO: Mod lệch phiên bản game")
+                .setMessage("Mod \"" + modFile.getName() + "\" được tạo lúc game ở phiên bản "
+                    + modGameVersion + ", nhưng máy bạn hiện đang ở phiên bản " + gameVersion + ".\n\n"
+                    + "Cài mod này CÓ THỂ khiến không vào được game — nếu vậy, bạn sẽ cần vào lại "
+                    + "\"Fix Resources\" để khôi phục trước khi thử cách khác.\n\n"
+                    + "Bạn có chắc muốn tiếp tục cài không?")
+                .setPositiveButton("Vẫn cài", (d, w) -> startInstallMod(modFile))
+                .setNegativeButton("Huỷ", null)
+                .create();
+            styleDialog(dialog);
+            dialog.show();
+            return;
+        }
+
+        String title = fromFreshDownload ? "📦 Phát hiện mod vừa tải" : "Cài mod";
+        String message;
+        if (fromFreshDownload) {
+            String createdTime = new java.text.SimpleDateFormat("HH:mm dd/MM/yyyy", java.util.Locale.getDefault())
+                .format(new java.util.Date(modFile.lastModified()));
+            message = "Tên file: " + modFile.getName() + "\nThời gian tạo: " + createdTime + "\n\nCài ngay?";
+        } else {
+            message = "Mod này sẽ được cài vào game. Tiếp tục?";
+        }
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-            .setTitle("📦 Phát hiện mod vừa tải")
-            .setMessage("Tên file: " + modFile.getName()
-                + "\nThời gian tạo: " + createdTime
-                + "\n\nCài ngay?")
-            .setPositiveButton("Cài ngay", (d, w) -> {
-                setButtonsEnabled(false);
-                showProgress(true);
-                executor.execute(() -> installMod(Uri.fromFile(modFile)));
-            })
-            .setNegativeButton("Để sau", null)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton(fromFreshDownload ? "Cài ngay" : "Tiếp tục", (d, w) -> startInstallMod(modFile))
+            .setNegativeButton(fromFreshDownload ? "Để sau" : "Huỷ", null)
             .create();
         styleDialog(dialog);
         dialog.show();
+    }
+
+    private void startInstallMod(File modFile) {
+        if (!checkShizuku()) return; // giữ đúng cùng 1 điều kiện với nút "Cài Mod" thủ công
+        setButtonsEnabled(false);
+        showProgress(true);
+        executor.execute(() -> installMod(Uri.fromFile(modFile)));
     }
 
     // Kiểm tra Shizuku có đang thực sự sẵn sàng ngay lúc này hay không (không tự
@@ -639,7 +693,11 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Tạo Intent mở file picker, gợi ý mở tại Download/ModNinstaller/ (nơi WebView tải mod về)
+    // Tạo Intent mở file picker cho nút "Cài Mod" thủ công (chọn zip từ BẤT KỲ
+    // đâu trên máy, không riêng gì mod do web tool tạo) — gợi ý mở tại
+    // Download/ModNinstaller/ vì đây vẫn là vị trí quen thuộc cho mod tải bằng
+    // Chrome/app khác. Mod tải TRONG WebView của app giờ lưu ở bộ nhớ riêng
+    // (ModManifest.getModsDir(), xem màn "Các Mod đã tạo"), không còn ở đây.
     private Intent createModFilePickerIntent() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -784,6 +842,7 @@ public class MainActivity extends AppCompatActivity {
         Intent intent = new Intent(this, WebViewActivity.class);
         intent.putExtra(WebViewActivity.EXTRA_URL, url);
         intent.putExtra(WebViewActivity.EXTRA_TITLE, title);
+        intent.putExtra(WebViewActivity.EXTRA_GAME_VERSION, gameVersion); // đóng dấu mod tải trong phiên này
         startActivity(intent);
         overridePendingTransition(R.anim.slide_up_in, R.anim.stay_still);
     }
