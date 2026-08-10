@@ -63,6 +63,10 @@ public class MainActivity extends AppCompatActivity {
     // lần resume đầu tiên đó, các lần resume THẬT SỰ sau này (quay lại từ
     // Shizuku, từ WebView...) vẫn check lại bình thường.
     private boolean isFirstResume = true;
+    // 2 field phục vụ sửa lỗi announcement hiện đè lên splash + hiện lặp lại mỗi
+    // lần ra/vào WebView — xem chi tiết ở checkAnnouncement()/hideLoadingOverlay().
+    private String lastShownAnnouncementHashThisSession = null;
+    private Runnable pendingAnnouncementDisplay = null;
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
     private static final String ANNOUNCEMENT_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/announcement.txt";
     // "latest" release trên GitHub luôn có đúng 1 bản (workflow xoá bản "latest" cũ
@@ -489,8 +493,9 @@ public class MainActivity extends AppCompatActivity {
 
         // checkAnnouncement(): nếu người dùng mở lại app đang chạy sẵn (không cold-start),
         // onCreate() không chạy lại → sửa announcement.txt trên repo xong app không bao
-        // giờ biết để hiện thông báo mới.
-        checkAnnouncement();
+        // giờ biết để hiện thông báo mới. GỌI SAU checkForUpdate() (xem bên dưới), không
+        // gọi độc lập ở đây nữa — để ưu tiên đúng thứ tự: check cập nhật app trước, thông
+        // báo sau, và bỏ hẳn thông báo cho lượt này nếu đang có dialog cập nhật che màn.
 
         // checkShizukuAndInit(): cùng lý do như refreshShizukuStatus() ở trên — Shizuku có
         // thể bị tắt ngầm SAU KHI app đã mở, không chỉ lúc cold-start. Gọi lại đúng hàm này
@@ -509,8 +514,13 @@ public class MainActivity extends AppCompatActivity {
 
         // Check cập nhật — cũng chạy lại mỗi lần resume, không chỉ lúc cold-start,
         // để nếu người dùng bấm "Để sau" rồi vẫn ở trong app lâu, hoặc quay lại app
-        // sau khi có bản mới, đều được nhắc đúng lúc.
-        checkForUpdate();
+        // sau khi có bản mới, đều được nhắc đúng lúc. Ưu tiên chạy TRƯỚC, xong mới
+        // tới checkAnnouncement() — nếu vừa hiện dialog cập nhật thì bỏ qua thông
+        // báo cho lượt resume này (đỡ 2 dialog tranh nhau, dialog cập nhật quan
+        // trọng hơn nên không để bị che/lẫn với thông báo thường).
+        checkForUpdate(updateShown -> {
+            if (!updateShown) checkAnnouncement();
+        });
 
         // Vừa quay lại từ WebView sau khi tải mod xong (tín hiệu trực tiếp từ
         // saveBlobFile, không phải quét thư mục) → mời cài luôn, đỡ phải tự bấm
@@ -622,12 +632,21 @@ public class MainActivity extends AppCompatActivity {
         if (loadingOverlayHidden) return;
         loadingOverlayHidden = true;
         mainHandler.post(() -> {
-            if (layoutLoadingOverlay == null) return;
-            layoutLoadingOverlay.animate()
-                .alpha(0f)
-                .setDuration(200)
-                .withEndAction(() -> layoutLoadingOverlay.setVisibility(View.GONE))
-                .start();
+            if (layoutLoadingOverlay != null) {
+                layoutLoadingOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(200)
+                    .withEndAction(() -> layoutLoadingOverlay.setVisibility(View.GONE))
+                    .start();
+            }
+            // Splash vừa được lệnh ẩn — nếu checkAnnouncement() đã có sẵn 1 thông báo
+            // chờ (đến trước khi splash kịp ẩn), hiện nó ngay bây giờ thay vì hiện đè
+            // lên splash lúc nãy.
+            if (pendingAnnouncementDisplay != null) {
+                Runnable show = pendingAnnouncementDisplay;
+                pendingAnnouncementDisplay = null;
+                show.run();
+            }
         });
     }
 
@@ -1259,9 +1278,9 @@ public class MainActivity extends AppCompatActivity {
         // THẬT SỰ có) là rủi ro do lỗi kết nối; false-positive (nói CÓ trong khi
         // thật sự không) gần như không xảy ra do lỗi kết nối kiểu này.
         boolean fixed = fileExists(markerPath);
-        int retriesLeft = 2;
+        int retriesLeft = 3;
         while (!fixed && retriesLeft > 0) {
-            try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
             fixed = fileExists(markerPath);
             retriesLeft--;
         }
@@ -1276,10 +1295,10 @@ public class MainActivity extends AppCompatActivity {
         android.util.Log.d("ModNinstaller", source + " -> " + (isFixed ? "Đã Fix" : "Chưa Fix"));
         if (tvResourcesStatus == null) return;
         if (isFixed) {
-            tvResourcesStatus.setText("✓ Đã Fix");
+            tvResourcesStatus.setText("☑ Đã Fix");
             tvResourcesStatus.setTextColor(0xFF00CC66);
         } else {
-            tvResourcesStatus.setText("✗ Chưa Fix");
+            tvResourcesStatus.setText("☒ Chưa Fix");
             tvResourcesStatus.setTextColor(0xFFFFAA00);
         }
     }
@@ -1408,7 +1427,26 @@ public class MainActivity extends AppCompatActivity {
                 // thì bỏ qua. Nếu nội dung file đổi (hash đổi theo) → tự động hiện lại.
                 if (contentHash.equals(dismissedHash)) return;
 
-                mainHandler.post(() -> showAnnouncementDialog(content, contentHash));
+                mainHandler.post(() -> {
+                    // Chỉ hiện 1 LẦN cho mỗi nội dung thông báo TRONG CÙNG 1 PHIÊN mở app —
+                    // trước đây checkAnnouncement() chạy lại mỗi lần resume (kể cả chỉ ra/vào
+                    // WebView rồi quay lại ngay), nên nếu người dùng tắt dialog mà KHÔNG tick
+                    // "Không hiển thị lại", dialog cứ hiện lại liên tục mỗi lần quay về màn
+                    // chính — rất khó chịu. lastShownAnnouncementHashThisSession chỉ sống
+                    // trong bộ nhớ (mất khi tắt hẳn app), nên app mở lại từ đầu vẫn hiện lại
+                    // bình thường như thiết kế ban đầu, chỉ tránh lặp lại trong CÙNG 1 lần mở.
+                    if (contentHash.equals(lastShownAnnouncementHashThisSession)) return;
+                    lastShownAnnouncementHashThisSession = contentHash;
+
+                    Runnable show = () -> showAnnouncementDialog(content, contentHash);
+                    if (loadingOverlayHidden) {
+                        show.run();
+                    } else {
+                        // Splash vẫn đang hiện — đợi hideLoadingOverlay() tự gọi lại thay vì
+                        // hiện đè lên splash ngay bây giờ.
+                        pendingAnnouncementDisplay = show;
+                    }
+                });
             } catch (Exception ignored) {
                 // Không có mạng / chưa có file thông báo trên repo → im lặng bỏ qua
             }
@@ -1467,7 +1505,12 @@ public class MainActivity extends AppCompatActivity {
 
     // ─── Kiểm tra cập nhật ─────────────────────────────────────────
 
-    private void checkForUpdate() {
+    // "onDone" luôn được gọi đúng 1 lần khi kiểm tra xong, dù có mạng hay không —
+    // tham số cho biết có VỪA hiện dialog "Có bản cập nhật" hay không. Dùng để
+    // xếp checkAnnouncement() chạy SAU checkForUpdate() (ưu tiên check cập nhật
+    // app trước thông báo), và bỏ qua thông báo hẳn cho lượt này nếu đang có
+    // dialog cập nhật che màn hình — tránh 2 dialog tranh nhau hiện cùng lúc.
+    private void checkForUpdate(java.util.function.Consumer<Boolean> onDone) {
         executor.execute(() -> {
             try {
                 HttpURLConnection conn = (HttpURLConnection) new URL(LATEST_VERSION_URL).openConnection();
@@ -1496,6 +1539,7 @@ public class MainActivity extends AppCompatActivity {
                         .remove(PREF_UPDATE_SKIP_COUNT)
                         .remove(PREF_UPDATE_SKIP_VERSION_CODE)
                         .apply();
+                    onDone.accept(false);
                     return;
                 }
 
@@ -1508,8 +1552,10 @@ public class MainActivity extends AppCompatActivity {
 
                 boolean forceUpdate = skipCount >= MAX_UPDATE_SKIPS;
                 mainHandler.post(() -> showUpdateDialog(remoteVersionName, remoteVersionCode, forceUpdate));
+                onDone.accept(true);
             } catch (Exception ignored) {
                 // Không có mạng / chưa có version.json trên release → bỏ qua lặng lẽ
+                onDone.accept(false);
             }
         });
     }
