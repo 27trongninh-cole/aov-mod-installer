@@ -177,6 +177,11 @@ public class MainActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progress_bar);
         tvGameVersion = findViewById(R.id.tv_game_version);
         tvResourcesStatus = findViewById(R.id.tv_resources_status);
+        // Bấm vào cả dòng "Trạng thái Resources" để xem chi tiết đường dẫn đang
+        // kiểm tra + nội dung thật trong thư mục Config/ (đọc qua Shizuku) — hữu
+        // ích khi trạng thái hiện sai mà không rõ vì sao, khỏi cần trình quản lý
+        // file khác (thường không đọc được thư mục này nếu không có Shizuku).
+        findViewById(R.id.row_resources_status).setOnClickListener(v -> showResourcesDebugDialog());
         layoutLoadingOverlay = findViewById(R.id.layout_loading_overlay);
         tvLoadingStatus = findViewById(R.id.tv_loading_status);
 
@@ -1262,8 +1267,14 @@ public class MainActivity extends AppCompatActivity {
     // Check đồng bộ (PHẢI gọi từ thread nền, không phải main thread) trạng thái
     // Fix của 1 thư mục version cụ thể — dùng chung bởi checkMaintenanceMode()
     // và updateResourcesStatus() để tránh trùng lặp logic.
+    private volatile String lastMarkerDebugInfo = "";
+
     private boolean isFixedSync(String folder) {
-        if (folder == null || folder.isEmpty()) return false;
+        if (folder == null || folder.isEmpty()) {
+            lastMarkerDebugInfo = "Chưa xác định được thư mục version nào để kiểm tra "
+                + "(activeVersionFolder rỗng — thường do chưa khớp được version.txt).";
+            return false;
+        }
         String configPath = RESOURCES_PATH + "/" + folder + "/Config";
         String markerPath = configPath + "/" + MARKER_FIXED;
 
@@ -1284,7 +1295,26 @@ public class MainActivity extends AppCompatActivity {
             fixed = fileExists(markerPath);
             retriesLeft--;
         }
+
+        // Luôn ghi lại info debug — dù kết quả là true hay false — để có gì bấm vào
+        // dòng "Trạng thái Resources" là xem được ngay, không cần đoán mò lần sau.
+        String configListing = runShellOutput("ls -la \"" + configPath + "\" 2>&1");
+        lastMarkerDebugInfo = "Đường dẫn đang kiểm tra:\n" + markerPath
+            + "\n\nKết quả: " + (fixed ? "TÌM THẤY" : "KHÔNG tìm thấy")
+            + "\n\nNội dung thư mục Config/ hiện tại (ls -la):\n"
+            + (configListing.trim().isEmpty() ? "(rỗng hoặc không đọc được)" : configListing.trim());
+
         return fixed;
+    }
+
+    // Hiện đúng nội dung lastMarkerDebugInfo (được isFixedSync() ghi lại mỗi lần
+    // chạy) — cho bạn TỰ THẤY app đang check đúng đường dẫn nào và Config/ thật
+    // sự có gì, thay vì phải đoán qua mô tả lại bằng lời.
+    private void showResourcesDebugDialog() {
+        String info = lastMarkerDebugInfo.isEmpty()
+            ? "Chưa có dữ liệu — hãy đợi app kiểm tra xong (hoặc bấm lại sau khi mở app)."
+            : lastMarkerDebugInfo;
+        showScrollableDialog("🔍 Chi tiết kiểm tra Resources", info);
     }
 
     // Áp UI trạng thái Resources (PHẢI gọi từ main thread).
