@@ -1178,18 +1178,68 @@ public class MainActivity extends AppCompatActivity {
 
     private void checkMaintenanceMode() {
         executor.execute(() -> {
-            // Chưa từng Fix Resources thành công lần nào nên chưa có version.txt
-            // chuẩn để đối chiếu → không đủ căn cứ để báo bảo trì.
+            // Chưa từng Fix Resources thành công lần nào (hoặc vừa cài app lần đầu,
+            // kể cả khi bản thân thư mục Resources trên máy ĐÃ được 1 app khác từng
+            // Fix trước đó — trước đây app chỉ biết version.txt "chuẩn" là gì SAU KHI
+            // CHÍNH app này tự Fix ít nhất 1 lần, ghi nhớ riêng cho từng lần cài đặt.
+            // App mới cài (package khác/cài lại) không có ký ức đó, dù Resources trên
+            // máy chưa hề đổi gì) → CHỦ ĐỘNG dò xem Resources/ đã có sẵn thư mục nào
+            // chưa, đọc version.txt bên trong, RỒI NHẬN LUÔN làm chuẩn — không cần
+            // đợi tự tay Fix lại từ đầu mới nhận ra Resources đã đúng sẵn rồi.
             if (resourcesVersionTxt.isEmpty()) {
-                String folder = !resourcesVersionFolder.isEmpty() ? resourcesVersionFolder : null;
-                activeVersionFolder = folder;
-                boolean fixed = isFixedSync(folder);
-                mainHandler.post(() -> {
-                    setMaintenanceUI(false, "", "");
-                    applyResourcesStatusUI(fixed, "checkMaintenanceMode() [chưa có resourcesVersionTxt]");
-                });
-                hideLoadingOverlay();
-                return;
+                String rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
+                String discoveredFolder = null;
+                String discoveredVersionTxt = null;
+
+                // QUAN TRỌNG: không nhận đại thư mục ĐẦU TIÊN tìm thấy — có thể là
+                // thư mục CŨ còn sót lại từ lần game cập nhật trước, chưa bị dọn dẹp
+                // (y hệt tình huống mà đoạn code bên dưới đã tính tới cho trường hợp
+                // "đã biết resourcesVersionTxt"). Chỉ nhận đúng thư mục có version.txt
+                // KHỚP với gameVersion hiện tại (vừa tải từ server ở fetchConfig()) —
+                // đây là căn cứ khách quan duy nhất để biết thư mục nào MỚI, không
+                // phải chỉ "thư mục có sẵn version.txt là đủ tin".
+                if (!gameVersion.isEmpty()) {
+                    for (String l : rawOutput.split("\n")) {
+                        String folderName = l.trim();
+                        if (folderName.isEmpty() || !folderName.matches("\\d+\\.\\d+.*")) continue;
+                        String content = runShellOutput(
+                            "cat \"" + RESOURCES_PATH + "/" + folderName + "/" + VERSION_FILE_NAME + "\" 2>/dev/null").trim();
+                        if (!content.isEmpty() && parseShortVersion(content).equals(gameVersion)) {
+                            discoveredFolder = folderName;
+                            discoveredVersionTxt = content;
+                            break;
+                        }
+                    }
+                }
+
+                if (discoveredFolder != null) {
+                    // Nhận làm chuẩn + ghi nhớ lại, để lần kiểm tra SAU không cần dò lại
+                    // (giống hệt như vừa tự tay Fix Resources thành công xong).
+                    resourcesVersionFolder = discoveredFolder;
+                    resourcesVersionTxt = discoveredVersionTxt;
+                    getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                        .putString(PREF_RESOURCES_VERSION_FOLDER, resourcesVersionFolder)
+                        .putString(PREF_RESOURCES_VERSION_TXT, resourcesVersionTxt)
+                        .apply();
+                    // KHÔNG return ở đây — để chạy tiếp xuống nhánh chính bên dưới, đối
+                    // chiếu với resourcesVersionTxt vừa nhận được như bình thường.
+                } else {
+                    // Không tìm được thư mục nào khớp ĐÚNG gameVersion hiện tại — hoặc
+                    // Resources/ trống thật (chưa Fix bao giờ), hoặc chỉ có thư mục CŨ
+                    // (game đã lên bản mới, thư mục Resources chưa được cập nhật theo) —
+                    // KHÔNG được tự nhận liều 1 thư mục cũ làm chuẩn trong cả 2 trường
+                    // hợp này. Báo "Chưa Fix" (không phải "Bảo trì", vì chưa có gì để so
+                    // sánh maintenance) — người dùng bấm Fix Resources sẽ tải đúng bản
+                    // mới nhất, tự nhiên giải quyết luôn cả 2 trường hợp.
+                    activeVersionFolder = null;
+                    boolean fixed = isFixedSync(null);
+                    mainHandler.post(() -> {
+                        setMaintenanceUI(false, "", "");
+                        applyResourcesStatusUI(fixed, "checkMaintenanceMode() [không có thư mục nào khớp gameVersion hiện tại]");
+                    });
+                    hideLoadingOverlay();
+                    return;
+                }
             }
 
             // Liệt kê TẤT CẢ thư mục version có trong Resources trên máy — có thể có
