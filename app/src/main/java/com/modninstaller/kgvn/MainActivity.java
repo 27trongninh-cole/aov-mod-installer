@@ -69,6 +69,11 @@ public class MainActivity extends AppCompatActivity {
     private Runnable pendingAnnouncementDisplay = null;
     private static final String CONFIG_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/config.json";
     private static final String ANNOUNCEMENT_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/announcement.txt";
+    // Danh sách tool "Công cụ khác" — sửa file tools.json trên repo là cập nhật
+    // được cho MỌI người dùng ngay, không cần build/phát hành lại APK. Định
+    // dạng: mảng JSON các object {"icon","title","subtitle","url"} — xem
+    // ToolsConfig.parseFromJson() để biết chi tiết field.
+    private static final String TOOLS_URL = "https://raw.githubusercontent.com/27trongninh-cole/aov-mod-installer/main/tools.json";
     // "latest" release trên GitHub luôn có đúng 1 bản (workflow xoá bản "latest" cũ
     // trước khi tạo bản mới) → link /releases/latest/download/<tên file> luôn trỏ
     // đúng vào asset của lần build gần nhất, không cần biết tag/version cụ thể.
@@ -78,6 +83,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_UPDATE_SKIP_VERSION_CODE = "update_skip_version_code";
     private static final int MAX_UPDATE_SKIPS = 2;
     private static final String PREF_ANNOUNCEMENT_DISMISSED_HASH = "announcement_dismissed_hash";
+    private static final String PREF_TOOLS_JSON_CACHE = "tools_json_cache";
     private static final String DATA_PATH = "/storage/emulated/0/Android/data/com.garena.game.kgvn/files";
     private static final String RESOURCES_PATH = DATA_PATH + "/Resources";
     // Tên thư mục backup cũ (hardcode) — giữ lại làm fallback để nhận diện backup
@@ -275,9 +281,11 @@ public class MainActivity extends AppCompatActivity {
         // phương án dự phòng cho người không quen thao tác vuốt.
         setupToolsAreaToggle();
 
-        // Công cụ tạo mod — tự động tạo từ danh sách OTHER_TOOLS (tìm ở gần
-        // cuối file). Muốn thêm/sửa tool, chỉ cần sửa danh sách đó.
-        populateOtherTools();
+        // Công cụ tạo mod — hiện ngay bằng cache/mặc định (ToolsConfig.java), rồi
+        // tự cập nhật lại nếu tools.json trên repo có gì mới (xem ToolsConfig.java
+        // và fetchToolsConfig() để biết cách thêm/sửa tool mà không cần build lại APK).
+        populateOtherTools(ToolsConfig.getCachedOrDefault(this)); // hiện ngay, không chờ mạng
+        fetchToolsConfig(); // tải bản mới nhất từ repo ở nền, tự vẽ lại nếu có gì đổi
 
         // Nút thông tin (!)
         findViewById(R.id.btn_info_fix).setOnClickListener(v ->
@@ -873,14 +881,17 @@ public class MainActivity extends AppCompatActivity {
         overridePendingTransition(R.anim.slide_up_in, R.anim.stay_still);
     }
 
-    // Danh sách tool ("Công cụ khác") giờ nằm ở file riêng ToolsConfig.java —
-    // muốn thêm/sửa tool, mở file đó, KHÔNG sửa ở đây. Tách ra để các lần
-    // cập nhật MainActivity sau này không đụng/mất danh sách tool của bạn.
-    private void populateOtherTools() {
+    // Danh sách tool ("Công cụ khác") có thể đến từ 2 nguồn: danh sách mặc định
+    // đóng gói sẵn trong ToolsConfig.java (fallback khi chưa từng tải được từ
+    // repo, VD lần đầu mở app chưa có mạng), hoặc danh sách MỚI NHẤT tải về từ
+    // tools.json trên repo (xem fetchToolsConfig()) — sửa tools.json trên repo
+    // là danh sách tự cập nhật cho MỌI người dùng, không cần build lại APK.
+    private void populateOtherTools(java.util.List<ToolsConfig.ToolItem> tools) {
         LinearLayout container = findViewById(R.id.container_other_tools);
+        container.removeAllViews(); // có thể gọi lại lần 2 sau khi tools.json tải xong
         int density = (int) getResources().getDisplayMetrics().density;
 
-        for (ToolsConfig.ToolItem tool : ToolsConfig.OTHER_TOOLS) {
+        for (ToolsConfig.ToolItem tool : tools) {
             androidx.cardview.widget.CardView card = new androidx.cardview.widget.CardView(this);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -1529,6 +1540,43 @@ public class MainActivity extends AppCompatActivity {
                 });
             } catch (Exception ignored) {
                 // Không có mạng / chưa có file thông báo trên repo → im lặng bỏ qua
+            }
+        });
+    }
+
+    // Tải danh sách tool "Công cụ khác" mới nhất từ tools.json trên repo. Nếu
+    // tải được và KHÁC danh sách đang hiện (hoặc lần đầu tải được), lưu cache +
+    // vẽ lại khu "Công cụ khác". Nếu lỗi mạng/parse — im lặng giữ nguyên danh
+    // sách đang hiện (cache cũ hoặc mặc định đóng gói sẵn), không báo lỗi gì
+    // cho người dùng vì đây không phải tính năng thiết yếu.
+    private void fetchToolsConfig() {
+        executor.execute(() -> {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL(TOOLS_URL).openConnection();
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line).append("\n");
+                reader.close();
+                String rawJson = sb.toString().trim();
+                if (rawJson.isEmpty()) return;
+
+                java.util.List<ToolsConfig.ToolItem> fetched = ToolsConfig.parseFromJson(rawJson);
+                if (fetched == null || fetched.isEmpty()) return; // JSON hỏng/rỗng → giữ nguyên hiện tại
+
+                String cachedRawJson = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+                    .getString(PREF_TOOLS_JSON_CACHE, "");
+                if (rawJson.equals(cachedRawJson)) return; // không đổi gì so với lần trước → khỏi vẽ lại
+
+                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                    .putString(PREF_TOOLS_JSON_CACHE, rawJson)
+                    .apply();
+                mainHandler.post(() -> populateOtherTools(fetched));
+            } catch (Exception ignored) {
+                // Không có mạng / chưa có tools.json trên repo → giữ nguyên danh sách
+                // đang hiện (cache cũ hoặc mặc định đóng gói sẵn trong ToolsConfig.java)
             }
         });
     }
