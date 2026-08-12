@@ -183,11 +183,6 @@ public class MainActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progress_bar);
         tvGameVersion = findViewById(R.id.tv_game_version);
         tvResourcesStatus = findViewById(R.id.tv_resources_status);
-        // Bấm vào cả dòng "Trạng thái Resources" để xem chi tiết đường dẫn đang
-        // kiểm tra + nội dung thật trong thư mục Config/ (đọc qua Shizuku) — hữu
-        // ích khi trạng thái hiện sai mà không rõ vì sao, khỏi cần trình quản lý
-        // file khác (thường không đọc được thư mục này nếu không có Shizuku).
-        findViewById(R.id.row_resources_status).setOnClickListener(v -> showResourcesDebugDialog());
         layoutLoadingOverlay = findViewById(R.id.layout_loading_overlay);
         tvLoadingStatus = findViewById(R.id.tv_loading_status);
 
@@ -224,7 +219,7 @@ public class MainActivity extends AppCompatActivity {
         // trong bộ nhớ riêng của app, không đụng gì tới thư mục Resources của
         // game (chỉ khi BẤM CÀI 1 mod trong màn đó mới cần Shizuku, lúc đó
         // MainActivity sẽ tự check lại qua promptInstallMod/startInstallMod).
-        findViewById(R.id.btn_created_mods).setOnClickListener(v ->
+        findViewById(R.id.row_created_mods).setOnClickListener(v ->
             startActivity(new Intent(this, CreatedModsActivity.class)));
 
         btnRemoveMod.setOnClickListener(v -> {
@@ -286,6 +281,10 @@ public class MainActivity extends AppCompatActivity {
         // và fetchToolsConfig() để biết cách thêm/sửa tool mà không cần build lại APK).
         populateOtherTools(ToolsConfig.getCachedOrDefault(this)); // hiện ngay, không chờ mạng
         fetchToolsConfig(); // tải bản mới nhất từ repo ở nền, tự vẽ lại nếu có gì đổi
+
+        // Dọn file APK cập nhật đã cài xong (còn sót trong cache) — xem
+        // cleanupStaleUpdateApks() để biết chi tiết điều kiện xoá.
+        executor.execute(this::cleanupStaleUpdateApks);
 
         // Nút thông tin (!)
         findViewById(R.id.btn_info_fix).setOnClickListener(v ->
@@ -539,6 +538,22 @@ public class MainActivity extends AppCompatActivity {
         // saveBlobFile, không phải quét thư mục) → mời cài luôn, đỡ phải tự bấm
         // "Cài Mod" rồi chọn lại đúng file vừa tải.
         checkPendingModFromWebView();
+
+        // Cập nhật lại số đếm "Mod đã lưu" — cần chạy lại mỗi lần resume vì có thể
+        // vừa quay lại từ màn "Các Mod đã tạo" sau khi thêm/xoá 1 mod ở đó, hoặc
+        // vừa có mod mới tải về qua WebView (đoạn checkPendingModFromWebView() ở
+        // trên chỉ hỏi cài, không tự cập nhật số đếm này).
+        updateCreatedModsCount();
+    }
+
+    private void updateCreatedModsCount() {
+        executor.execute(() -> {
+            int count = ModManifest.loadAll(this).size();
+            mainHandler.post(() -> {
+                TextView tv = findViewById(R.id.tv_created_mods_count);
+                if (tv != null) tv.setText(count + " mod");
+            });
+        });
     }
 
     private void checkPendingModFromWebView() {
@@ -1328,14 +1343,8 @@ public class MainActivity extends AppCompatActivity {
     // Check đồng bộ (PHẢI gọi từ thread nền, không phải main thread) trạng thái
     // Fix của 1 thư mục version cụ thể — dùng chung bởi checkMaintenanceMode()
     // và updateResourcesStatus() để tránh trùng lặp logic.
-    private volatile String lastMarkerDebugInfo = "";
-
     private boolean isFixedSync(String folder) {
-        if (folder == null || folder.isEmpty()) {
-            lastMarkerDebugInfo = "Chưa xác định được thư mục version nào để kiểm tra "
-                + "(activeVersionFolder rỗng — thường do chưa khớp được version.txt).";
-            return false;
-        }
+        if (folder == null || folder.isEmpty()) return false;
         String configPath = RESOURCES_PATH + "/" + folder + "/Config";
         String markerPath = configPath + "/" + MARKER_FIXED;
 
@@ -1356,26 +1365,7 @@ public class MainActivity extends AppCompatActivity {
             fixed = fileExists(markerPath);
             retriesLeft--;
         }
-
-        // Luôn ghi lại info debug — dù kết quả là true hay false — để có gì bấm vào
-        // dòng "Trạng thái Resources" là xem được ngay, không cần đoán mò lần sau.
-        String configListing = runShellOutput("ls -la \"" + configPath + "\" 2>&1");
-        lastMarkerDebugInfo = "Đường dẫn đang kiểm tra:\n" + markerPath
-            + "\n\nKết quả: " + (fixed ? "TÌM THẤY" : "KHÔNG tìm thấy")
-            + "\n\nNội dung thư mục Config/ hiện tại (ls -la):\n"
-            + (configListing.trim().isEmpty() ? "(rỗng hoặc không đọc được)" : configListing.trim());
-
         return fixed;
-    }
-
-    // Hiện đúng nội dung lastMarkerDebugInfo (được isFixedSync() ghi lại mỗi lần
-    // chạy) — cho bạn TỰ THẤY app đang check đúng đường dẫn nào và Config/ thật
-    // sự có gì, thay vì phải đoán qua mô tả lại bằng lời.
-    private void showResourcesDebugDialog() {
-        String info = lastMarkerDebugInfo.isEmpty()
-            ? "Chưa có dữ liệu — hãy đợi app kiểm tra xong (hoặc bấm lại sau khi mở app)."
-            : lastMarkerDebugInfo;
-        showScrollableDialog("🔍 Chi tiết kiểm tra Resources", info);
     }
 
     // Áp UI trạng thái Resources (PHẢI gọi từ main thread).
@@ -1730,6 +1720,38 @@ public class MainActivity extends AppCompatActivity {
     // giữa 2 lần mở app server đã lên thêm bản mới hơn nữa, hoặc file cache còn sót
     // từ 1 lượt update dở dang trước đó, app sẽ cài nhầm APK cũ → cài đặt thất bại
     // hoặc cài sai bản mà không rõ lý do.
+    // Dọn file "update_<versionCode>.apk" còn sót trong cache — file này chỉ cần
+    // tồn tại TRONG LÚC chờ cài đặt; sau khi app đã chạy ở đúng version đó (hoặc
+    // cao hơn) rồi thì file APK cài đặt cũ không còn tác dụng gì nữa, chỉ chiếm
+    // dung lượng cache vô ích nếu để mãi. Trước đây chỉ dọn file của version
+    // KHÁC target hiện tại (lúc chuẩn bị tải bản mới) — nhưng APK của ĐÚNG bản
+    // đang chạy thì không bao giờ được dọn, nằm lại trong cache vĩnh viễn cho
+    // tới tận lần cập nhật kế tiếp. Gọi mỗi lúc mở app (cold-start) để dọn sớm,
+    // ngay sau khi chắc chắn app đã chạy ở version này rồi (còn đang mở được
+    // nghĩa là đã cài xong, dùng an toàn).
+    private void cleanupStaleUpdateApks() {
+        File[] files = getCacheDir().listFiles((d, name) ->
+            name.startsWith("update_") && name.endsWith(".apk"));
+        if (files == null) return;
+        for (File f : files) {
+            String name = f.getName(); // "update_<versionCode>.apk"
+            String codeStr = name.substring("update_".length(), name.length() - ".apk".length());
+            try {
+                int fileVersionCode = Integer.parseInt(codeStr);
+                if (fileVersionCode <= BuildConfig.VERSION_CODE) {
+                    // App đang chạy đã ở đúng bản này hoặc mới hơn rồi → file cài đặt
+                    // này chắc chắn đã hết tác dụng (dùng xong hoặc lỗi thời).
+                    f.delete();
+                }
+                // fileVersionCode > VERSION_CODE hiện tại: có thể là bản vừa tải xong
+                // nhưng người dùng chưa kịp bấm cài (đang chờ ở dialog promptInstallApk)
+                // — GIỮ LẠI, không xoá nhầm giữa chừng.
+            } catch (NumberFormatException ignored) {
+                // Tên file không đúng định dạng mong đợi — bỏ qua, không đoán mò xoá.
+            }
+        }
+    }
+
     private void downloadAndInstallUpdate(int targetVersionCode) {
         executor.execute(() -> {
             File apkFile = new File(getCacheDir(), "update_" + targetVersionCode + ".apk");
@@ -1894,7 +1916,28 @@ public class MainActivity extends AppCompatActivity {
         // Chưa từng lưu tên trong pref → có thể là backup từ bản app cũ, kiểm
         // tra tên legacy cố định.
         String legacyPath = DATA_PATH + "/" + LEGACY_BACKUP_FOLDER_NAME;
-        return fileExists(legacyPath) ? legacyPath : null;
+        if (fileExists(legacyPath)) return legacyPath;
+
+        // KHÔNG có trong pref VÀ không phải tên legacy — vẫn có thể là backup
+        // hợp lệ do 1 APP KHÁC (package khác, hoặc cùng app nhưng cài lại từ
+        // đầu) tạo ra: cơ chế tên ngẫu nhiên (BACKUP_FOLDER_PREFIX + hex) chỉ
+        // được "nhớ" qua SharedPreferences riêng của TỪNG app cài đặt — app mới
+        // không có ký ức đó dù thư mục backup vẫn nằm nguyên trên máy. Trước
+        // đây tới đây coi như "không có backup" luôn, khiến "Xóa Mod" mất khả
+        // năng hoàn trả Resources gốc dù backup vẫn còn thật. Giờ chủ động dò
+        // trong DATA_PATH tìm thư mục nào bắt đầu bằng đúng prefix, nhận làm
+        // backup đang hoạt động + ghi nhớ lại cho lần sau khỏi dò lại.
+        String lsOutput = runShellOutput("ls \"" + DATA_PATH + "\" 2>/dev/null");
+        for (String l : lsOutput.split("\n")) {
+            String name = l.trim();
+            if (name.startsWith(BACKUP_FOLDER_PREFIX)) {
+                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                    .putString(PREF_BACKUP_FOLDER_NAME, name)
+                    .apply();
+                return DATA_PATH + "/" + name;
+            }
+        }
+        return null;
     }
 
     // Sinh tên thư mục backup ngẫu nhiên (prefix cố định + 8 ký tự hex ngẫu nhiên).
@@ -3190,6 +3233,9 @@ public class MainActivity extends AppCompatActivity {
             .addStep(findViewById(R.id.handle_bar_row),
                 "🧰 Công cụ tạo Mod",
                 "Vuốt lên (hoặc bấm) thanh gạch ngang này bất cứ lúc nào để mở khu vực chứa các công cụ tạo Mod cùng tác giả.")
+            .addStep(findViewById(R.id.row_created_mods),
+                "📦 Mod đã lưu",
+                "Nơi lưu lại các Mod bạn đã tải từ web tool — xem lại, cài lại, hoặc xoá bớt bất cứ lúc nào, không cần tải lại từ đầu.")
             .start();
     }
 

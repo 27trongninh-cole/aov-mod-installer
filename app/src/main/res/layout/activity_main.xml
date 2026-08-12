@@ -128,14 +128,10 @@
 
             <!-- Resources status row -->
             <LinearLayout
-                android:id="@+id/row_resources_status"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true">
+                android:gravity="center_vertical">
 
                 <TextView
                     android:layout_width="0dp"
@@ -153,6 +149,46 @@
                     android:textColor="#888888"
                     android:textSize="13sp"
                     android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Mod đã lưu row — dòng thông tin/kho lưu trữ, KHÔNG phải công cụ
+                 hành động như Fix/Cài/Xoá, nên nằm đây thay vì thành 1 card to
+                 dưới khu công cụ. Bấm vào để mở màn "Các Mod đã tạo". -->
+            <LinearLayout
+                android:id="@+id/row_created_mods"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="10dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Mod đã lưu"
+                    android:textColor="#888888"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tv_created_mods_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 mod"
+                    android:textColor="#888888"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textColor="#888888"
+                    android:textSize="16sp"
+                    android:layout_marginStart="6dp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -382,58 +418,6 @@
                     android:clickable="true"
                     android:focusable="true"
                     android:alpha="0.7" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <androidx.cardview.widget.CardView
-            android:id="@+id/card_created_mods"
-            xmlns:app="http://schemas.android.com/apk/res-auto"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="4dp"
-            app:cardBackgroundColor="#2a2a3e"
-            android:layout_marginBottom="24dp">
-
-            <LinearLayout
-                android:id="@+id/btn_created_mods"
-                android:layout_width="match_parent"
-                android:layout_height="64dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="20dp"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true">
-
-                <TextView
-                    android:layout_width="36dp"
-                    android:layout_height="wrap_content"
-                    android:text="📦"
-                    android:textSize="22sp"
-                    android:gravity="center"
-                    android:layout_marginEnd="12dp" />
-
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Các Mod đã tạo"
-                        android:textColor="#ffffff"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Xem, cài lại, hoặc xoá mod đã tải"
-                        android:textColor="#888888"
-                        android:textSize="11sp" />
-                </LinearLayout>
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
