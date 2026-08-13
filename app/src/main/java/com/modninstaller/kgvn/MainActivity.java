@@ -1048,6 +1048,10 @@ public class MainActivity extends AppCompatActivity {
     // ─── Shell via rish ──────────────────────────────────────────
 
     private String runShellOutput(String cmd) {
+        return runShellOutput(cmd, 20);
+    }
+
+    private String runShellOutput(String cmd, int timeoutSeconds) {
         if (isLegacyMode) {
             try {
                 Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
@@ -1079,10 +1083,10 @@ public class MainActivity extends AppCompatActivity {
             reader.setDaemon(true);
             reader.start();
 
-            boolean finished = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            boolean finished = p.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
-                return "Exception: rish timeout (không phản hồi sau 20s)";
+                return "Exception: rish timeout (không phản hồi sau " + timeoutSeconds + "s)";
             }
             reader.join(2000); // chờ thêm chút để đọc nốt output còn sót
             return sb.toString().trim();
@@ -1092,6 +1096,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean runShell(String cmd) {
+        return runShell(cmd, 20);
+    }
+
+    // timeoutSeconds tách riêng — LỆNH COPY/XOÁ THƯ MỤC RESOURCES CÓ THỂ RẤT LỚN
+    // (hàng trăm MB tới cả GB), 20 giây mặc định (đủ cho lệnh nhỏ như mkdir/mv/echo)
+    // là QUÁ NGẮN cho lệnh cp -r/rm -rf cả gói Resources — máy chậm hoặc gói lớn
+    // dễ bị p.destroyForcibly() giết giữa chừng, làm copy DỞ DANG (không lỗi rõ
+    // ràng nhưng cũng không hoàn tất) — đây là nguyên nhân rất có khả năng gây ra
+    // hiện tượng "Fix Resources chạy nhưng không có gì xảy ra".
+    private boolean runShell(String cmd, int timeoutSeconds) {
         if (isLegacyMode) {
             // Android <= 10: chạy shell thường không cần rish
             try {
@@ -1116,7 +1130,7 @@ public class MainActivity extends AppCompatActivity {
             reader.setDaemon(true);
             reader.start();
 
-            boolean finished = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS);
+            boolean finished = p.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
                 return false;
@@ -1345,6 +1359,10 @@ public class MainActivity extends AppCompatActivity {
             //     tải được gameVersion) → không đủ căn cứ so sánh, coi như không bảo trì.
             boolean isMaintenance = !liveGameVersion.isEmpty() && !gameVersion.isEmpty()
                 && compareVersions(liveGameVersion, gameVersion) > 0;
+
+            android.util.Log.d("ModNinstaller", "checkMaintenanceMode(): liveFolder=" + liveFolder
+                + " liveGameVersion=" + liveGameVersion + " gameVersion(config)=" + gameVersion
+                + " isMaintenance=" + isMaintenance);
 
             activeVersionFolder = liveFolder;
             // Tính trạng thái Fix NGAY TRONG CÙNG tác vụ này (không queue thêm tác
@@ -2042,8 +2060,14 @@ public class MainActivity extends AppCompatActivity {
     // ─── Tính năng 1: Fix Resources ──────────────────────────────
 
     private void fixResources() {
+        // Hiện bảng tiến trình NGAY LẬP TỨC — trước đây các bước chuẩn bị (check
+        // hash, resolveActiveBackupPath() gọi qua Shizuku...) chạy trước khi bảng
+        // tiến trình đầu tiên xuất hiện, tạo ra 1 khoảng trống không hiện gì sau
+        // khi bấm "Tiếp tục", gây cảm giác app bị đứng/chưa phản hồi.
+        showProgressDialog("Đang chuẩn bị...");
         try {
             if (resourcesUrl == null) {
+                dismissProgressDialog();
                 showDialog("Lỗi", "Không lấy được config từ server. Kiểm tra kết nối mạng.");
                 return;
             }
@@ -2055,7 +2079,6 @@ public class MainActivity extends AppCompatActivity {
                 && backupZip.exists();
 
             if (!hashMatch) {
-                showProgressDialog("Đang tải Resources...");
                 updateProgressDialog("Đang tải Resources từ server...", 0);
                 downloadFileWithProgress(resourcesUrl, backupZip);
                 updateProgressDialog("Kiểm tra file...", 95);
@@ -2069,11 +2092,9 @@ public class MainActivity extends AppCompatActivity {
                 }
                 saveHash(downloadedHash.isEmpty() ? resourcesHash : downloadedHash);
                 updateProgressDialog("Tải xong!", 100);
-                dismissProgressDialog();
             }
 
-            showProgressDialog("Đang cài đặt...");
-            updateProgressDialog("Chuẩn bị thư mục...", 10);
+            updateProgressDialog("Đang cài đặt...", 10);
 
             String existingBackupPath = resolveActiveBackupPath();
             boolean backupExists = existingBackupPath != null;
@@ -2173,7 +2194,7 @@ public class MainActivity extends AppCompatActivity {
             // vào RESOURCES_PATH — không copy nguyên extractTmpDir/. vào
             // DATA_PATH/ như trước, để không phụ thuộc cấu trúc lồng nhau
             // trong zip gốc.
-            boolean copied = runShell("mkdir -p \"" + RESOURCES_PATH + "\" && cp -r \"" + resourcesContentRoot.getAbsolutePath() + "/.\" \"" + RESOURCES_PATH + "/\"");
+            boolean copied = runShell("mkdir -p \"" + RESOURCES_PATH + "\" && cp -r \"" + resourcesContentRoot.getAbsolutePath() + "/.\" \"" + RESOURCES_PATH + "/\"", 600);
 
             updateProgressDialog("Dọn dẹp...", 90);
             deleteRecursive(extractTmpDir);
@@ -2192,6 +2213,11 @@ public class MainActivity extends AppCompatActivity {
             dismissProgressDialog();
 
             if (copied) {
+                // Đợi 1 chút trước khi check lại — vừa copy xong 1 gói Resources có thể
+                // rất lớn (hàng trăm MB) qua Shizuku, hệ thống lưu trữ có thể cần thêm
+                // chút thời gian "ổn định" trước khi 1 tiến trình ĐỘC LẬP khác (lệnh
+                // check ngay sau đây) đọc lại thấy đúng — dù lệnh cp đã báo xong thật.
+                try { Thread.sleep(600); } catch (InterruptedException ignored) {}
                 // Gọi lại checkMaintenanceMode() thay vì chỉ updateResourcesStatus() để
                 // activeVersionFolder được xác định lại ngay với resourcesVersionTxt vừa
                 // cập nhật ở trên (đặc biệt quan trọng cho lần Fix Resources đầu tiên).
@@ -2690,7 +2716,7 @@ public class MainActivity extends AppCompatActivity {
         String cpLogPath = getExternalCacheDir().getAbsolutePath() + "/cp_debug_log.txt";
         String cmd = "mkdir -p \"" + targetPath + "\" && cp -rv \"" + sourceDir.getAbsolutePath()
             + "/.\" \"" + targetPath + "/\" > \"" + cpLogPath + "\" 2>&1; echo EXIT_CODE_IS_$?_HERE";
-        String exitCheck = runShellOutput(cmd);
+        String exitCheck = runShellOutput(cmd, 180);
         boolean copied = exitCheck.contains("EXIT_CODE_IS_0_HERE");
 
         String cpOutput = runShellOutput("cat \"" + cpLogPath + "\" | tail -n 40");
@@ -3055,9 +3081,13 @@ public class MainActivity extends AppCompatActivity {
     // ─── Tính năng 3: Xóa Mod ────────────────────────────────────
 
     private void removeMod() {
+        // Hiện bảng tiến trình ngay lập tức — cùng lý do như fixResources(), tránh
+        // khoảng trống trước khi resolveActiveBackupPath() (gọi qua Shizuku) chạy xong.
+        showProgressDialog("Đang chuẩn bị...");
         try {
             String activeBackupPath = resolveActiveBackupPath();
             if (activeBackupPath == null) {
+                dismissProgressDialog();
                 showDialog("Lỗi", "Không tìm thấy thư mục backup Resources gốc. Hãy chạy Fix Resources trước.");
                 mainHandler.post(() -> {
                     setButtonsEnabled(true);
@@ -3066,9 +3096,8 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            showProgressDialog("Đang xóa mod...");
             updateProgressDialog("Đang xóa Resources hiện tại...", 30);
-            boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"");
+            boolean deleted = runShell("rm -rf \"" + RESOURCES_PATH + "\"", 180);
             if (!deleted) {
                 dismissProgressDialog();
                 showDialog("Lỗi", "Không thể xóa Resources hiện tại.");
@@ -3095,7 +3124,12 @@ public class MainActivity extends AppCompatActivity {
                 getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
                     .remove(PREF_BACKUP_FOLDER_NAME)
                     .apply();
-                updateResourcesStatus();
+                // KHÔNG gọi updateResourcesStatus() ở đây nữa — Resources gốc (backup)
+                // đúng là không có marker "Đã Fix" (marker chỉ được tạo lúc Fix Resources
+                // tải gói mod về), nên gọi hàm này sẽ tự nhiên đổi hiển thị thành "Chưa Fix"
+                // — về mặt kỹ thuật không sai, nhưng gây khó chịu/hoang mang không cần
+                // thiết ngay sau khi vừa Xóa Mod thành công (dialog đã tự giải thích rõ
+                // "cần bấm Fix Resources lại" rồi, không cần thêm cảnh báo trạng thái nữa).
                 showDialog("Thành công ✅", "Đã xóa mod và khôi phục Resources gốc!\n\nLưu ý: cần bấm Fix Resources lại trước khi cài mod mới.");
             } else {
                 showDialog("Lỗi", "Khôi phục Resources thất bại.");
