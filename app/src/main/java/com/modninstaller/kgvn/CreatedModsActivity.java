@@ -142,17 +142,30 @@ public class CreatedModsActivity extends AppCompatActivity {
 
     // Không tự cài ở đây — CreatedModsActivity không có sẵn executor/kết nối
     // Shizuku (chỉ MainActivity có). Ghi lại lựa chọn của người dùng vào cùng
-    // SharedPreferences mà WebViewActivity dùng cho luồng "vừa tải xong", rồi
-    // finish() để quay lại MainActivity — onResume() của MainActivity sẽ tự
-    // đọc và hiện đúng dialog xác nhận/cảnh báo tương ứng (xem
-    // MainActivity.checkPendingModFromWebView()/promptInstallMod()).
+    // Hiện dialog xác nhận NGAY TẠI ĐÂY (không finish() trước rồi mới hiện dialog
+    // ở MainActivity) — trước đây finish() chạy trước, quay lại MainActivity rồi
+    // mới hiện dialog qua onResume(), nên có 1 khoảng người dùng thấy màn hình
+    // chính/công cụ tạo mod trần trụi (không dialog) trước khi dialog kịp hiện —
+    // gây cảm giác giật/nhảy màn hình. Giờ chỉ finish() SAU KHI người dùng đã bấm
+    // xác nhận — cảnh báo lệch phiên bản (nếu có) vẫn do MainActivity xử lý sau
+    // khi quay lại (chấp nhận được vì đó là trường hợp hiếm/cảnh báo phụ thêm,
+    // không phải luồng xác nhận thường ngày mà người dùng hay gặp).
     private void confirmInstall(ModManifest.ModEntry entry) {
-        SharedPreferences prefs = getSharedPreferences(WebViewActivity.PREFS_NAME, MODE_PRIVATE);
-        prefs.edit()
-            .putString(WebViewActivity.KEY_PENDING_MOD_PATH, entry.file(this).getAbsolutePath())
-            .putString(WebViewActivity.KEY_PENDING_MOD_VERSION, entry.gameVersion)
-            .putString(WebViewActivity.KEY_PENDING_MOD_SOURCE, WebViewActivity.SOURCE_LIST)
-            .apply();
-        finish();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("Cài mod")
+            .setMessage("Mod này sẽ được cài vào game. Tiếp tục?")
+            .setPositiveButton("Tiếp tục", (d, w) -> {
+                SharedPreferences prefs = getSharedPreferences(WebViewActivity.PREFS_NAME, MODE_PRIVATE);
+                prefs.edit()
+                    .putString(WebViewActivity.KEY_PENDING_MOD_PATH, entry.file(this).getAbsolutePath())
+                    .putString(WebViewActivity.KEY_PENDING_MOD_VERSION, entry.gameVersion)
+                    .putString(WebViewActivity.KEY_PENDING_MOD_SOURCE, WebViewActivity.SOURCE_LIST)
+                    .putBoolean(WebViewActivity.KEY_PENDING_MOD_ALREADY_CONFIRMED, true)
+                    .apply();
+                finish();
+            })
+            .setNegativeButton("Huỷ", null)
+            .create();
+        dialog.show();
     }
 }

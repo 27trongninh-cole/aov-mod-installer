@@ -448,6 +448,10 @@ public class WebViewActivity extends AppCompatActivity {
     static final String KEY_PENDING_MOD_SOURCE = "pending_mod_source";
     static final String SOURCE_DOWNLOAD = "download";
     static final String SOURCE_LIST = "list";
+    // true nếu người dùng ĐÃ xác nhận "Tiếp tục?" ngay tại CreatedModsActivity
+    // rồi (tránh MainActivity hỏi lại lần 2 khi quay lại) — xem
+    // CreatedModsActivity.confirmInstall() và MainActivity.promptInstallMod().
+    static final String KEY_PENDING_MOD_ALREADY_CONFIRMED = "pending_mod_already_confirmed";
 
     private class BlobDownloadInterface {
         @JavascriptInterface

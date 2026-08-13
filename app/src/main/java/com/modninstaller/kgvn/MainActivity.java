@@ -563,28 +563,32 @@ public class MainActivity extends AppCompatActivity {
         if (path == null) return;
         String modVersion = prefs.getString(WebViewActivity.KEY_PENDING_MOD_VERSION, "");
         String source = prefs.getString(WebViewActivity.KEY_PENDING_MOD_SOURCE, WebViewActivity.SOURCE_DOWNLOAD);
+        boolean alreadyConfirmed = prefs.getBoolean(WebViewActivity.KEY_PENDING_MOD_ALREADY_CONFIRMED, false);
         // Xoá ngay khi đọc — dù người dùng chọn cài hay không, dialog này chỉ
         // hỏi 1 LẦN cho đúng 1 mod, không hỏi lặp lại ở lần mở app/quay lại kế tiếp.
         prefs.edit()
             .remove(WebViewActivity.KEY_PENDING_MOD_PATH)
             .remove(WebViewActivity.KEY_PENDING_MOD_VERSION)
             .remove(WebViewActivity.KEY_PENDING_MOD_SOURCE)
+            .remove(WebViewActivity.KEY_PENDING_MOD_ALREADY_CONFIRMED)
             .apply();
 
         File modFile = new File(path);
         if (!modFile.exists()) return; // phòng TH file bị xoá trước khi kịp hỏi
 
-        promptInstallMod(modFile, modVersion, WebViewActivity.SOURCE_DOWNLOAD.equals(source));
+        promptInstallMod(modFile, modVersion, WebViewActivity.SOURCE_DOWNLOAD.equals(source), alreadyConfirmed);
     }
 
     // Dùng chung cho cả 2 lối vào cài mod đã lưu sẵn trong app:
     //   - fromFreshDownload = true  → vừa tải xong qua WebView (hiện tên + giờ tải)
     //   - fromFreshDownload = false → người dùng tự bấm chọn 1 dòng trong màn
-    //     "Các Mod đã tạo" (hỏi ngắn gọn "Tiếp tục?")
-    // Cảnh báo lệch phiên bản áp dụng CHUNG cho cả 2 lối vào, vì phiên bản game
-    // lúc TẢI có thể khác phiên bản game lúc CÀI thật sự (người dùng tải rồi để
-    // đó, sau đó game mới cập nhật) — không phải chỉ liên quan tới thời điểm tải.
-    private void promptInstallMod(File modFile, String modGameVersion, boolean fromFreshDownload) {
+    //     "Các Mod đã tạo" — dialog "Tiếp tục?" đã được CreatedModsActivity hỏi
+    //     TRƯỚC RỒI (alreadyConfirmed=true), không hỏi lại lần 2 ở đây nữa.
+    // Cảnh báo lệch phiên bản áp dụng CHUNG cho cả 2 lối vào (kể cả khi
+    // alreadyConfirmed=true) vì phiên bản game lúc TẢI có thể khác phiên bản
+    // game lúc CÀI thật sự (người dùng tải rồi để đó, sau đó game mới cập nhật)
+    // — CreatedModsActivity không biết được điều này lúc hỏi "Tiếp tục?" cơ bản.
+    private void promptInstallMod(File modFile, String modGameVersion, boolean fromFreshDownload, boolean alreadyConfirmed) {
         boolean versionKnown = modGameVersion != null && !modGameVersion.isEmpty();
         boolean versionMismatch = versionKnown && gameVersion != null && !gameVersion.isEmpty()
             && !modGameVersion.equals(gameVersion);
@@ -605,6 +609,13 @@ public class MainActivity extends AppCompatActivity {
                 .create();
             styleDialog(dialog);
             dialog.show();
+            return;
+        }
+
+        if (alreadyConfirmed) {
+            // Đã hỏi "Tiếp tục?" ở CreatedModsActivity rồi, không lệch phiên bản
+            // → cài luôn, khỏi hỏi lại lần 2 cho cùng 1 quyết định.
+            startInstallMod(modFile);
             return;
         }
 
@@ -1368,17 +1379,43 @@ public class MainActivity extends AppCompatActivity {
         return fixed;
     }
 
+    // MỘT KHI đã xác nhận "Đã Fix" ít nhất 1 lần trong phiên mở app này, giữ
+    // nguyên hiển thị đó — KHÔNG tự động nhảy về "Chưa Fix" nữa dù có lượt check
+    // sau đó trả về false (dù đã dò lại nhiều lần, kênh Shizuku vẫn có thể khựng
+    // đúng lúc bất kỳ, không thể triệt tiêu hoàn toàn bằng retry). Chỉ được phép
+    // "hạ cấp" xuống Chưa Fix khi có BẰNG CHỨNG THẬT — tức là lúc Cài Mod thất
+    // bại và code chủ động re-check để tìm nguyên nhân (allowDowngrade=true) —
+    // không phải từ 1 lượt check nền tình cờ trả về false. Giúp người dùng yên
+    // tâm cài mod, không hoang mang vì thấy "Chưa Fix" chớp nhoáng vô cớ.
+    private boolean sessionConfirmedFixed = false;
+
     // Áp UI trạng thái Resources (PHẢI gọi từ main thread).
     // "source" chỉ ghi vào Logcat (android.util.Log) để dò lỗi bằng adb sau này
     // nếu cần — KHÔNG hiện gì trên màn hình, vì app không có bản "debug riêng
     // cho mình xem" nào cả, mọi bản build đều tới tay người dùng thật.
     private void applyResourcesStatusUI(boolean isFixed, String source) {
-        android.util.Log.d("ModNinstaller", source + " -> " + (isFixed ? "Đã Fix" : "Chưa Fix"));
+        applyResourcesStatusUI(isFixed, source, false);
+    }
+
+    private void applyResourcesStatusUI(boolean isFixed, String source, boolean allowDowngrade) {
+        android.util.Log.d("ModNinstaller", source + " -> " + (isFixed ? "Đã Fix" : "Chưa Fix")
+            + (allowDowngrade ? " [allowDowngrade]" : ""));
+
+        if (!isFixed && sessionConfirmedFixed && !allowDowngrade) {
+            // Bỏ qua kết quả false thoáng qua này — giữ nguyên "Đã Fix" đang hiện.
+            return;
+        }
+
         if (tvResourcesStatus == null) return;
         if (isFixed) {
+            sessionConfirmedFixed = true;
             tvResourcesStatus.setText("☑ Đã Fix");
             tvResourcesStatus.setTextColor(0xFF00CC66);
         } else {
+            // Tới được đây nghĩa là: hoặc chưa từng confirmed lần nào (bình thường),
+            // hoặc allowDowngrade=true (có bằng chứng thật) — cả 2 trường hợp đều
+            // hợp lệ để hiện Chưa Fix và reset lại cờ sticky.
+            sessionConfirmedFixed = false;
             tvResourcesStatus.setText("☒ Chưa Fix");
             tvResourcesStatus.setTextColor(0xFFFFAA00);
         }
@@ -2659,16 +2696,27 @@ public class MainActivity extends AppCompatActivity {
             // vào BuildConfig.DEBUG nữa (mọi bản build ở đây đều đến tay người dùng
             // thật, không có "bản riêng cho mình" nào) — luôn hiện bản gọn.
             showDialog("Thành công ✅", "Cài mod thành công! Khởi động lại game để thấy thay đổi.");
-        } else if (!isCurrentResourcesFixed()) {
-            // Lý do phổ biến nhất khiến copy thất bại/không xác minh được là do
-            // Resources chưa từng được Fix (thư mục Config/marker chưa tồn tại) —
-            // báo đúng nguyên nhân thay vì bảng debug dài khó hiểu với người dùng thường.
-            showDialog("Cài Mod thất bại", "Cài Mod thất bại, hãy thử /Fix Resources/ rồi thử lại.\n\n"
-                + "Lưu ý: Fix Resources sẽ xoá toàn bộ Mod trước đó, bạn có thể cài lại "
-                + "Mod trước đó bằng cách nhấn /Xóa Mod/ ở ứng dụng này.");
         } else {
-            showScrollableDialog("⚠️ Nghi ngờ thất bại", "Lệnh copy chạy xong nhưng KHÔNG xác minh được file đã thực sự vào game.\n\n─── Debug info ───\n" + debugInfo
-                + "\n\nHãy chụp màn hình bảng này gửi để debug thêm.");
+            // Cài Mod thất bại — đây là lúc DUY NHẤT được phép phá vỡ trạng thái
+            // "Đã Fix" sticky (xem applyResourcesStatusUI) — vì giờ có bằng chứng
+            // THẬT (copy thất bại) chứ không phải 1 lượt check nền tình cờ. Check
+            // lại thật để biết chính xác lý do, và cho phép hạ cấp hiển thị nếu quả
+            // thật Resources không còn ở trạng thái Đã Fix.
+            boolean reallyFixed = isCurrentResourcesFixed();
+            mainHandler.post(() -> applyResourcesStatusUI(reallyFixed,
+                "proceedModInstallCopy() [cài mod thất bại, re-check thật]", true));
+
+            if (!reallyFixed) {
+                // Lý do phổ biến nhất khiến copy thất bại/không xác minh được là do
+                // Resources chưa từng được Fix (thư mục Config/marker chưa tồn tại) —
+                // báo đúng nguyên nhân thay vì bảng debug dài khó hiểu với người dùng thường.
+                showDialog("Cài Mod thất bại", "Cài Mod thất bại, hãy thử /Fix Resources/ rồi thử lại.\n\n"
+                    + "Lưu ý: Fix Resources sẽ xoá toàn bộ Mod trước đó, bạn có thể cài lại "
+                    + "Mod trước đó bằng cách nhấn /Xóa Mod/ ở ứng dụng này.");
+            } else {
+                showScrollableDialog("⚠️ Nghi ngờ thất bại", "Lệnh copy chạy xong nhưng KHÔNG xác minh được file đã thực sự vào game.\n\n─── Debug info ───\n" + debugInfo
+                    + "\n\nHãy chụp màn hình bảng này gửi để debug thêm.");
+            }
         }
 
         mainHandler.post(() -> {
@@ -3234,7 +3282,7 @@ public class MainActivity extends AppCompatActivity {
                 "🧰 Công cụ tạo Mod",
                 "Vuốt lên (hoặc bấm) thanh gạch ngang này bất cứ lúc nào để mở khu vực chứa các công cụ tạo Mod cùng tác giả.")
             .addStep(findViewById(R.id.row_created_mods),
-                "📦 Mod đã lưu",
+                "📦 Mod đã tạo",
                 "Nơi lưu lại các Mod bạn đã tải từ web tool — xem lại, cài lại, hoặc xoá bớt bất cứ lúc nào, không cần tải lại từ đầu.")
             .start();
     }
