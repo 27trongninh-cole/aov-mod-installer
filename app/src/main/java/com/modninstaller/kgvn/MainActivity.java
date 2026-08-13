@@ -194,21 +194,7 @@ public class MainActivity extends AppCompatActivity {
 
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
 
-        btnFixResources.setOnClickListener(v -> {
-            if (!checkShizuku()) return;
-            AlertDialog d1 = new AlertDialog.Builder(this)
-                .setTitle("Fix Resources")
-                .setMessage("App sẽ thay thế thư mục Resources. Tiếp tục?")
-                .setPositiveButton("Tiếp tục", (d, w) -> {
-                    setButtonsEnabled(false);
-                    showProgress(true);
-                    executor.execute(this::fixResources);
-                })
-                .setNegativeButton("Hủy", null)
-                .create();
-            styleDialog(d1);
-            d1.show();
-        });
+        btnFixResources.setOnClickListener(v -> triggerFixResourcesFlow());
 
         btnInstallMod.setOnClickListener(v -> {
             if (!checkShizuku()) return;
@@ -1213,6 +1199,24 @@ public class MainActivity extends AppCompatActivity {
 
     // ─── Maintenance Mode ───────────────────────────────────────
 
+    // Tách riêng để dùng chung cho cả nút "Fix Resources" thường VÀ nút "Fix
+    // Resources ngay" trong dialog "Đang bảo trì" (xem setMaintenanceUI()).
+    private void triggerFixResourcesFlow() {
+        if (!checkShizuku()) return;
+        AlertDialog d1 = new AlertDialog.Builder(this)
+            .setTitle("Fix Resources")
+            .setMessage("App sẽ thay thế thư mục Resources. Tiếp tục?")
+            .setPositiveButton("Tiếp tục", (d, w) -> {
+                setButtonsEnabled(false);
+                showProgress(true);
+                executor.execute(this::fixResources);
+            })
+            .setNegativeButton("Hủy", null)
+            .create();
+        styleDialog(d1);
+        d1.show();
+    }
+
     private void checkMaintenanceMode() {
         executor.execute(() -> {
             // Chưa từng Fix Resources thành công lần nào (hoặc vừa cài app lần đầu,
@@ -1281,10 +1285,7 @@ public class MainActivity extends AppCompatActivity {
 
             // Liệt kê TẤT CẢ thư mục version có trong Resources trên máy — có thể có
             // nhiều thư mục tồn tại song song (vd game vừa cập nhật lên bản mới nhưng
-            // thư mục version cũ chưa kịp bị dọn dẹp). Đối chiếu version.txt BÊN TRONG
-            // từng thư mục (không phải tên thư mục) để tìm đúng bản khớp với Resources
-            // đã Fix — tránh báo nhầm bảo trì khi vẫn còn 1 thư mục đúng nằm cạnh thư
-            // mục khác.
+            // thư mục version cũ chưa kịp bị dọn dẹp).
             boolean resourcesPathExists = fileExists(RESOURCES_PATH);
             String rawOutput = runShellOutput("ls \"" + RESOURCES_PATH + "\" 2>/dev/null");
 
@@ -1302,13 +1303,15 @@ public class MainActivity extends AppCompatActivity {
                 retriesLeft--;
             }
 
-            String matchedFolder = null;
-            // Debug: giữ lại RAW output của `ls` (không lọc) — trước đây chỉ log
-            // những dòng khớp định dạng số, nên khi KHÔNG có dòng nào khớp, debug
-            // trống trơn, không phân biệt được "Resources/ rỗng thật" với "có thư
-            // mục nhưng tên không khớp định dạng mong đợi". Giờ luôn hiện đúng những
-            // gì `ls` trả về, cộng thêm kiểm tra riêng đường dẫn Resources/ có tồn
-            // tại hay không.
+            // "Phiên bản game hiện tại" = nội dung version.txt đọc được BÊN TRONG thư
+            // mục Resources đang thật sự nằm trên máy (không phải config.json trên
+            // repo) — đây là dữ liệu do CHÍNH GAME tạo ra, phản ánh đúng thực tế máy
+            // đang có gì, độc lập với việc Ninfinity đã cập nhật config tới đâu. Nếu
+            // có nhiều thư mục cùng lúc (game vừa update, thư mục cũ chưa dọn), lấy
+            // thư mục có version CAO NHẤT — đó mới là bản game thật sự đang chạy.
+            String liveFolder = null;
+            String liveGameVersion = "";
+
             StringBuilder debugLog = new StringBuilder();
             debugLog.append("Resources/ tồn tại: ").append(resourcesPathExists ? "có" : "KHÔNG").append("\n");
             debugLog.append("ls Resources/ trả về:\n")
@@ -1321,20 +1324,35 @@ public class MainActivity extends AppCompatActivity {
                     "cat \"" + RESOURCES_PATH + "/" + folderName + "/" + VERSION_FILE_NAME + "\" 2>/dev/null").trim();
                 debugLog.append("→ ").append(folderName).append("/").append(VERSION_FILE_NAME).append(": ")
                     .append(content.isEmpty() ? "(rỗng/không đọc được)" : content).append("\n");
-                if (!content.isEmpty() && content.equals(resourcesVersionTxt)) {
-                    matchedFolder = folderName;
-                    break;
+                if (content.isEmpty()) continue;
+                String shortV = parseShortVersion(content);
+                if (liveGameVersion.isEmpty() || compareVersions(shortV, liveGameVersion) > 0) {
+                    liveGameVersion = shortV;
+                    liveFolder = folderName;
                 }
             }
 
-            activeVersionFolder = matchedFolder;
-            boolean isMaintenance = (matchedFolder == null);
-            String expectedDisplay = parseShortVersion(resourcesVersionTxt);
+            // So sánh THEO CHIỀU — đây là điểm mấu chốt khác trước:
+            //   • game (live) MỚI HƠN config repo  → ĐÚNG nghĩa "Bảo trì": Ninfinity
+            //     chưa kịp cập nhật gói Resources mod theo bản game mới nhất, phải chờ.
+            //   • game (live) CŨ HƠN config repo   → KHÔNG phải bảo trì — Ninfinity đã
+            //     chuẩn bị sẵn gói mới rồi, chỉ là NGƯỜI DÙNG chưa bấm Fix Resources để
+            //     tải về thôi → xử lý y hệt "Chưa Fix" bình thường (không chặn nút, không
+            //     hiện cảnh báo bảo trì) — nút "Fix Resources" vẫn bấm được như thường.
+            //   • bằng nhau                        → không có cảnh báo gì, kiểm tra Fix
+            //     bình thường theo file marker.
+            //   • không xác định được 1 trong 2 vế (Resources trống, hoặc config chưa
+            //     tải được gameVersion) → không đủ căn cứ so sánh, coi như không bảo trì.
+            boolean isMaintenance = !liveGameVersion.isEmpty() && !gameVersion.isEmpty()
+                && compareVersions(liveGameVersion, gameVersion) > 0;
+
+            activeVersionFolder = liveFolder;
             // Tính trạng thái Fix NGAY TRONG CÙNG tác vụ này (không queue thêm tác
             // vụ con đọc lại activeVersionFolder ở 1 thời điểm khác) — tránh trường
             // hợp 2 lượt checkMaintenanceMode() gọi gần nhau làm banner bảo trì và
             // dòng "Đã Fix/Chưa Fix" bị tính từ 2 lượt khác nhau, hiển thị lệch nhau.
-            boolean fixed = isFixedSync(matchedFolder);
+            boolean fixed = isFixedSync(liveFolder);
+            String expectedDisplay = gameVersion; // hiện đúng phiên bản Ninfinity đang target
             String debugSnapshot = debugLog.toString();
 
             mainHandler.post(() -> {
@@ -1349,6 +1367,31 @@ public class MainActivity extends AppCompatActivity {
             });
             hideLoadingOverlay();
         });
+    }
+
+    // So sánh 2 chuỗi version dạng "a.b.c.d..." theo TỪNG SỐ (không so chuỗi trực
+    // tiếp — so chuỗi sẽ sai kiểu "1.63.1.9" bị coi LỚN HƠN "1.63.1.10" vì ký tự
+    // '9' > '1'). Trả về >0 nếu a mới hơn b, <0 nếu a cũ hơn b, 0 nếu bằng nhau.
+    // Số đoạn không cần bằng nhau — đoạn thiếu coi như 0 (VD "1.63" so với
+    // "1.63.0" là bằng nhau).
+    private int compareVersions(String a, String b) {
+        String[] pa = a.split("\\.");
+        String[] pb = b.split("\\.");
+        int len = Math.max(pa.length, pb.length);
+        for (int i = 0; i < len; i++) {
+            int va = i < pa.length ? parseIntSafe(pa[i]) : 0;
+            int vb = i < pb.length ? parseIntSafe(pb[i]) : 0;
+            if (va != vb) return va - vb;
+        }
+        return 0;
+    }
+
+    private int parseIntSafe(String s) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     // Check đồng bộ (PHẢI gọi từ thread nền, không phải main thread) trạng thái
@@ -1517,8 +1560,17 @@ public class MainActivity extends AppCompatActivity {
         // bản, đó là dấu hiệu (2), thử mở lại app hoặc bấm Fix Resources lại xem
         // còn báo bảo trì không.
         String debugSection = "\n\n[Debug]\n" + debugSnapshot.trim() + "\n\nKỳ vọng version.txt: " + resourcesVersionTxt;
-        showDialog("🚧 Đang bảo trì",
-            detail + "\n\nVui lòng quay lại sau khi Ninfinity cập nhật Resources mới!" + debugSection);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("🚧 Đang bảo trì")
+            .setMessage(detail + "\n\nNếu Ninfinity đã cập nhật Resources mới, bấm \"Fix Resources ngay\" để "
+                + "tải bản mới nhất — app sẽ tự nhận ra và tải lại nếu có bản khác bản đang lưu.\n\n"
+                + "Nếu vừa bấm mà vẫn còn báo bảo trì, mới là lúc cần chờ Ninfinity cập nhật."
+                + debugSection)
+            .setPositiveButton("Fix Resources ngay", (d, w) -> triggerFixResourcesFlow())
+            .setNegativeButton("Đóng", null)
+            .create();
+        styleDialog(dialog);
+        dialog.show();
     }
 
     // ─── Thông báo (announcement) ─────────────────────────────────
