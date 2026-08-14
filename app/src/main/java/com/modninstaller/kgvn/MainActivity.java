@@ -966,9 +966,56 @@ public class MainActivity extends AppCompatActivity {
             row.setOnClickListener(v -> {
                 if ("coming_soon".equals(tool.url)) {
                     showDialog(tool.icon + " " + tool.title, "Đang phát triển, sẽ cập nhật sau.");
+                } else if (ToolsConfig.TYPE_DOWNLOAD.equals(tool.type)) {
+                    confirmDirectDownloadTool(tool);
                 } else {
                     openWebViewWindow(tool.url, tool.title);
                 }
+            });
+        }
+    }
+
+    // Tool kiểu "download" (tools.json) — không mở web nào cả, tải thẳng file
+    // theo tool.url rồi lưu vào "Các Mod đã tạo" (ModManifest), y hệt cơ chế
+    // 1 mod tải qua WebView — vẫn đóng dấu phiên bản game hiện tại + hiện dialog
+    // hỏi cài ngay sau khi tải xong, dùng CHUNG hạ tầng với luồng WebView.
+    private void confirmDirectDownloadTool(ToolsConfig.ToolItem tool) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle(tool.icon + " " + tool.title)
+            .setMessage("Tải \"" + tool.filename + "\" về máy?")
+            .setPositiveButton("Tải", (d, w) -> executor.execute(() -> runDirectDownloadTool(tool)))
+            .setNegativeButton("Huỷ", null)
+            .create();
+        styleDialog(dialog);
+        dialog.show();
+    }
+
+    private void runDirectDownloadTool(ToolsConfig.ToolItem tool) {
+        try {
+            mainHandler.post(() -> showProgressDialog("Đang tải " + tool.filename + "..."));
+            File modsDir = ModManifest.getModsDir(this);
+            File outFile = new File(modsDir, tool.filename);
+            downloadFileWithProgress(tool.url, outFile);
+
+            ModManifest.addEntry(this, tool.filename, gameVersion);
+            getSharedPreferences(WebViewActivity.PREFS_NAME, MODE_PRIVATE).edit()
+                .putString(WebViewActivity.KEY_PENDING_MOD_PATH, outFile.getAbsolutePath())
+                .putString(WebViewActivity.KEY_PENDING_MOD_VERSION, gameVersion)
+                .putString(WebViewActivity.KEY_PENDING_MOD_SOURCE, WebViewActivity.SOURCE_DOWNLOAD)
+                .apply();
+
+            mainHandler.post(() -> {
+                dismissProgressDialog();
+                // Tải trực tiếp KHÔNG có chuyển màn hình nào (không như luồng WebView/
+                // CreatedModsActivity vốn dựa vào onResume() tự chạy lại khi quay về) —
+                // phải tự gọi tay ở đây để dialog "Phát hiện mod vừa tải" hiện ra.
+                checkPendingModFromWebView();
+            });
+        } catch (Exception e) {
+            mainHandler.post(() -> {
+                dismissProgressDialog();
+                showDialog("Lỗi", "Tải \"" + tool.filename + "\" thất bại: " + e.getMessage()
+                    + "\n\nKiểm tra lại link trong tools.json có phải link tải trực tiếp không.");
             });
         }
     }
