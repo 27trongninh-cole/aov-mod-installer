@@ -1,0 +1,8 @@
+strContent = Fix Reset đã kích hoạt thành công!
+hasCancelBtn = false
+onConfirm = nil
+onCancel = nil
+confirmStr = Đã hiểu
+cancelStr = Đã hiểu
+titleStr = NINFINITY · FIX RESET
+isShowCloseBtn = false
